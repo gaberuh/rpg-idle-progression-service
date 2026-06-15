@@ -294,6 +294,20 @@ func (r *huntRepository) ListRunningSessions(ctx context.Context, after time.Tim
 	return sessions, nil
 }
 
+// GetCharacterBlessings retorna a quantidade de blessings ativas do personagem.
+func (r *huntRepository) GetCharacterBlessings(ctx context.Context, characterID uuid.UUID) (int, error) {
+	const q = `SELECT quantity FROM character_blessings WHERE character_id = $1`
+	var qty int
+	err := r.db.QueryRow(ctx, q, characterID).Scan(&qty)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, dbErr("GetCharacterBlessings", err)
+	}
+	return qty, nil
+}
+
 // GetSessionKillCounts retorna kills por monstro com nome, ordenado por kill_count DESC.
 func (r *huntRepository) GetSessionKillCounts(ctx context.Context, sessionID uuid.UUID) ([]domain.SessionKillCount, error) {
 	const q = `

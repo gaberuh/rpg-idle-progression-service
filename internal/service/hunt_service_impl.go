@@ -114,7 +114,25 @@ func (s *huntServiceImpl) StopHunt(ctx context.Context, characterID uuid.UUID) e
 
 	now := time.Now().UTC()
 	endedBy := domain.EndedByPlayerStopped
-	return s.repo.EndSession(ctx, session.ID, endedBy, domain.SessionPendingClaim, time.Now().UTC())
+	if err := s.repo.EndSession(ctx, session.ID, endedBy, domain.SessionPendingClaim, now); err != nil {
+		return err
+	}
+
+	durationMinutes := int(now.Sub(session.StartedAt).Minutes())
+
+	_ = s.producer.PublishHuntResolved(ctx, dto.HuntSessionResolved{
+		SessionID:       session.ID,
+		CharacterID:     characterID,
+		HuntID:          session.HuntID,
+		EndedBy:         string(endedBy),
+		XPGained:        session.XPGained,
+		GoldGained:      session.GoldGained,
+		DurationMinutes: durationMinutes,
+		Vocation:        string(session.SnapshotVocation),
+		ResolvedAt:      now,
+	})
+
+	return nil
 }
 
 func (s *huntServiceImpl) GetActiveSession(ctx context.Context, characterID uuid.UUID) (*domain.HuntSession, error) {
@@ -151,32 +169,4 @@ func (s *huntServiceImpl) GetSessionResult(ctx context.Context, characterID uuid
 		KillCounts: kills,
 		Loot:       loot,
 	}, nil
-}
-
-// completeSession é chamado pelo worker quando a sessão chega ao fim do tempo configurado.
-func (s *huntServiceImpl) completeSession(ctx context.Context, session domain.HuntSession) error {
-	endedBy := domain.EndedByCompleted
-	if err := s.repo.EndSession(ctx, session.ID, endedBy, domain.SessionPendingClaim, time.Now().UTC()); err != nil {
-		return err
-	}
-
-	durationMinutes := int(now.Sub(session.StartedAt).Minutes())
-
-	_ = s.producer.PublishHuntResolved(ctx, dto.HuntSessionResolved{
-		SessionID:       session.ID,
-		CharacterID:     characterID,
-		HuntID:          session.HuntID,
-		EndedBy:         string(endedBy),
-		XPGained:        session.XPGained,
-		GoldGained:      session.GoldGained,
-		DurationMinutes: durationMinutes,
-		Vocation:        string(session.SnapshotVocation),
-		ResolvedAt:      now,
-	})
-
-	return nil
-}
-
-func (s *huntServiceImpl) GetActiveSession(ctx context.Context, characterID uuid.UUID) (*domain.HuntSession, error) {
-	return s.repo.GetActiveSession(ctx, characterID)
 }

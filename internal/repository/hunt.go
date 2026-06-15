@@ -36,6 +36,10 @@ type HuntRepository interface {
 	// Worker: cursor-based pagination
 	ListRunningSessions(ctx context.Context, after time.Time, limit int) ([]domain.HuntSession, error)
 
+	// GetCharacterBlessings retorna a quantidade de blessings ativas do personagem.
+	// Usado pelo worker para calcular penalidades no evento DeathOccurred.
+	GetCharacterBlessings(ctx context.Context, characterID uuid.UUID) (int, error)
+
 	// GetSessionKillCounts retorna kills por monstro com nome, ordenado por kill_count DESC.
 	GetSessionKillCounts(ctx context.Context, sessionID uuid.UUID) ([]domain.SessionKillCount, error)
 
