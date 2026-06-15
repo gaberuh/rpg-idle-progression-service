@@ -238,10 +238,10 @@ func (r *huntRepository) EndSession(ctx context.Context, id uuid.UUID, endedBy d
 func (r *huntRepository) UpsertKillCounts(ctx context.Context, sessionID uuid.UUID, kills map[uuid.UUID]int) error {
 	for monsterID, count := range kills {
 		const q = `
-			INSERT INTO hunt_session_kills (session_id, monster_id, kill_count)
+			INSERT INTO hunt_kill_counts (session_id, monster_id, kill_count)
 			VALUES ($1, $2, $3)
 			ON CONFLICT (session_id, monster_id)
-			DO UPDATE SET kill_count = hunt_session_kills.kill_count + EXCLUDED.kill_count`
+			DO UPDATE SET kill_count = hunt_kill_counts.kill_count + EXCLUDED.kill_count`
 
 		if _, err := r.db.Exec(ctx, q, sessionID, monsterID, count); err != nil {
 			return dbErr("UpsertKillCounts", err)
@@ -254,10 +254,10 @@ func (r *huntRepository) UpsertKillCounts(ctx context.Context, sessionID uuid.UU
 func (r *huntRepository) UpsertSessionLoot(ctx context.Context, sessionID uuid.UUID, loot map[uuid.UUID]domain.LootDrop) error {
 	for templateID, drop := range loot {
 		const q = `
-			INSERT INTO hunt_session_loot (session_id, template_id, quantity, rarity)
+			INSERT INTO session_loot (session_id, template_id, quantity, rarity)
 			VALUES ($1, $2, $3, $4)
 			ON CONFLICT (session_id, template_id)
-			DO UPDATE SET quantity = hunt_session_loot.quantity + EXCLUDED.quantity`
+			DO UPDATE SET quantity = session_loot.quantity + EXCLUDED.quantity`
 
 		if _, err := r.db.Exec(ctx, q, sessionID, templateID, drop.Quantity, drop.Rarity); err != nil {
 			return dbErr("UpsertSessionLoot", err)
