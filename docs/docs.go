@@ -32,7 +32,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Cursor da página anterior (opaque, retornado em next_cursor)",
+                        "description": "Cursor da página anterior (opaco, retornado em next_cursor)",
                         "name": "cursor",
                         "in": "query"
                     },
@@ -93,7 +93,10 @@ const docTemplate = `{
                 "summary": "Para a hunt em andamento",
                 "responses": {
                     "200": {
-                        "description": "OK"
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.StopHuntResponse"
+                        }
                     }
                 }
             }
@@ -168,7 +171,10 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "201": {
-                        "description": "Created"
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/dto.StartHuntResponse"
+                        }
                     }
                 }
             }
@@ -197,13 +203,16 @@ const docTemplate = `{
                 "configured_duration_minutes": {
                     "type": "integer"
                 },
-                "death_count": {
+                "elapsed_minutes": {
                     "type": "integer"
                 },
-                "gold_gained": {
+                "estimated_end_at": {
+                    "type": "string"
+                },
+                "gold_gained_so_far": {
                     "type": "integer"
                 },
-                "hunt_id": {
+                "hunt_name": {
                     "type": "string"
                 },
                 "session_id": {
@@ -215,7 +224,7 @@ const docTemplate = `{
                 "status": {
                     "type": "string"
                 },
-                "xp_gained": {
+                "xp_gained_so_far": {
                     "type": "integer"
                 }
             }
@@ -223,6 +232,9 @@ const docTemplate = `{
         "dto.HuntResponse": {
             "type": "object",
             "properties": {
+                "available": {
+                    "type": "boolean"
+                },
                 "difficulty": {
                     "type": "string"
                 },
@@ -243,26 +255,6 @@ const docTemplate = `{
                 }
             }
         },
-        "dto.ItemSnapshot": {
-            "type": "object",
-            "properties": {
-                "armor": {
-                    "type": "integer"
-                },
-                "attack": {
-                    "type": "integer"
-                },
-                "defense": {
-                    "type": "integer"
-                },
-                "item_id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
         "dto.ListHuntsResponse": {
             "type": "object",
             "properties": {
@@ -273,11 +265,9 @@ const docTemplate = `{
                     }
                 },
                 "next_cursor": {
-                    "description": "nil = última página",
                     "type": "string"
                 },
                 "total": {
-                    "description": "total de itens nesta página",
                     "type": "integer"
                 }
             }
@@ -297,7 +287,6 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "item_id": {
-                    "description": "preenchido apenas para itens únicos",
                     "type": "string"
                 },
                 "name": {
@@ -358,51 +347,59 @@ const docTemplate = `{
                 }
             }
         },
-        "dto.SkillSnapshot": {
-            "type": "object",
-            "properties": {
-                "level": {
-                    "type": "integer"
-                }
-            }
-        },
-        "dto.SnapshotPayload": {
-            "type": "object",
-            "properties": {
-                "equipment": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "$ref": "#/definitions/dto.ItemSnapshot"
-                    }
-                },
-                "level": {
-                    "type": "integer"
-                },
-                "skills": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "$ref": "#/definitions/dto.SkillSnapshot"
-                    }
-                },
-                "vocation": {
-                    "type": "string"
-                }
-            }
-        },
         "dto.StartHuntRequest": {
             "type": "object",
             "required": [
-                "duration_minutes",
-                "snapshot"
+                "duration_minutes"
             ],
             "properties": {
                 "duration_minutes": {
                     "type": "integer",
                     "maximum": 360,
                     "minimum": 1
+                }
+            }
+        },
+        "dto.StartHuntResponse": {
+            "type": "object",
+            "properties": {
+                "configured_duration_minutes": {
+                    "type": "integer"
                 },
-                "snapshot": {
-                    "$ref": "#/definitions/dto.SnapshotPayload"
+                "estimated_end_at": {
+                    "type": "string"
+                },
+                "hunt_id": {
+                    "type": "string"
+                },
+                "hunt_name": {
+                    "type": "string"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.StopHuntResponse": {
+            "type": "object",
+            "properties": {
+                "duration_minutes": {
+                    "type": "integer"
+                },
+                "ended_by": {
+                    "type": "string"
+                },
+                "gold_gained": {
+                    "type": "integer"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "xp_gained": {
+                    "type": "integer"
                 }
             }
         }
