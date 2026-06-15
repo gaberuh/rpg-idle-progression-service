@@ -15,6 +15,8 @@ Microserviço responsável por sessões de hunt, simulação de combate idle e e
 | 004_hunts_catalog.sql | 004 | **progression-service** |
 | 005_hunt_sessions.sql | 005 | **progression-service** |
 | 006_rename_tables_add_item_ids.sql | 006 | **progression-service** |
+| 007_item_templates_add_stackable_base_stats.sql | 007 | **progression-service** (adiciona `stackable` e `base_stats` ausentes no PRD-05) |
+| 008_monsters_add_loot_table.sql | 008 | **progression-service** (adiciona `loot_table` ausente no PRD-03) |
 
 ```bash
 goose -dir ./migrations postgres "$DB_URL" up
