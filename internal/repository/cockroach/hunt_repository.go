@@ -311,12 +311,15 @@ func (r *huntRepository) GetCharacterLevel(ctx context.Context, characterID uuid
 
 // GetCharacterSnapshot captura o estado completo do personagem para o snapshot da hunt.
 // Lê characters, character_skills e character_equipment com stats dos itens.
-func (r *huntRepository) GetCharacterSnapshot(ctx context.Context, characterID uuid.UUID) (*domain.CharacterSnapshot, error) {
-	const qChar = `SELECT level, vocation, status FROM characters WHERE player_id = $1`
+// playerID é o UUID do player (sujeito do JWT). Primeiro resolve characters.id para
+// consultar character_skills e character_equipment, que referenciam characters.id.
+func (r *huntRepository) GetCharacterSnapshot(ctx context.Context, playerID uuid.UUID) (*domain.CharacterSnapshot, error) {
+	const qChar = `SELECT id, level, vocation, status FROM characters WHERE player_id = $1`
+	var charID uuid.UUID
 	var level int
 	var vocation string
 	var status string
-	if err := r.db.QueryRow(ctx, qChar, characterID).Scan(&level, &vocation, &status); err != nil {
+	if err := r.db.QueryRow(ctx, qChar, playerID).Scan(&charID, &level, &vocation, &status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.ErrCharacterNotFound
 		}
@@ -326,8 +329,9 @@ func (r *huntRepository) GetCharacterSnapshot(ctx context.Context, characterID u
 		return nil, apperr.ErrCharacterNotIdle
 	}
 
+	// character_skills.character_id referencia characters.id — usa charID, não playerID
 	const qSkills = `SELECT skill_type, current_level FROM character_skills WHERE character_id = $1`
-	rows, err := r.db.Query(ctx, qSkills, characterID)
+	rows, err := r.db.Query(ctx, qSkills, charID)
 	if err != nil {
 		return nil, dbErr("GetCharacterSnapshot.skills", err)
 	}
@@ -343,6 +347,7 @@ func (r *huntRepository) GetCharacterSnapshot(ctx context.Context, characterID u
 		skills[skillType] = domain.SnapshotSkill{Level: skillLevel}
 	}
 
+	// character_equipment.character_id referencia characters.id — usa charID, não playerID
 	const qEquip = `
 		SELECT ce.slot, it.name,
 		    COALESCE((it.base_stats->>'attack')::int, 0),
@@ -355,7 +360,7 @@ func (r *huntRepository) GetCharacterSnapshot(ctx context.Context, characterID u
 		WHERE ce.character_id = $1`
 
 	equipment := make(domain.SnapshotEquipment)
-	eqRows, err := r.db.Query(ctx, qEquip, characterID)
+	eqRows, err := r.db.Query(ctx, qEquip, charID)
 	if err != nil {
 		// deposit_items/character_equipment podem não existir ainda (inventory-service não implementado).
 		// Snapshot com equipment vazio é válido — o personagem simplesmente não usa bônus de itens.
@@ -388,10 +393,16 @@ func (r *huntRepository) GetCharacterSnapshot(ctx context.Context, characterID u
 }
 
 // GetCharacterBlessings retorna a quantidade de blessings ativas do personagem.
-func (r *huntRepository) GetCharacterBlessings(ctx context.Context, characterID uuid.UUID) (int, error) {
-	const q = `SELECT quantity FROM character_blessings WHERE character_id = $1`
+// playerID é o UUID do player (sujeito do JWT / armazenado em hunt_sessions.character_id).
+// character_blessings.character_id referencia characters.id, então resolvemos via JOIN.
+func (r *huntRepository) GetCharacterBlessings(ctx context.Context, playerID uuid.UUID) (int, error) {
+	const q = `
+		SELECT COALESCE(cb.quantity, 0)
+		FROM characters c
+		LEFT JOIN character_blessings cb ON cb.character_id = c.id
+		WHERE c.player_id = $1`
 	var qty int
-	err := r.db.QueryRow(ctx, q, characterID).Scan(&qty)
+	err := r.db.QueryRow(ctx, q, playerID).Scan(&qty)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
@@ -399,6 +410,17 @@ func (r *huntRepository) GetCharacterBlessings(ctx context.Context, characterID 
 		return 0, dbErr("GetCharacterBlessings", err)
 	}
 	return qty, nil
+}
+
+// UpdateCharacterStatus atualiza characters.status pelo player_id.
+// O progression-service (banco compartilhado) é responsável por manter o status
+// sincronizado para que o mecanismo de guard (status = 'idle') funcione corretamente.
+func (r *huntRepository) UpdateCharacterStatus(ctx context.Context, playerID uuid.UUID, status string) error {
+	const q = `UPDATE characters SET status = $2 WHERE player_id = $1`
+	if _, err := r.db.Exec(ctx, q, playerID, status); err != nil {
+		return dbErr("UpdateCharacterStatus", err)
+	}
+	return nil
 }
 
 // GetSessionKillCounts retorna kills por monstro com nome, ordenado por kill_count DESC.

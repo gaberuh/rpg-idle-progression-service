@@ -198,6 +198,11 @@ func (w *HuntWorker) handleSessionEnd(ctx context.Context, session domain.HuntSe
 		return
 	}
 
+	// session.CharacterID armazena player_id — atualiza characters.status para pending_claim
+	if err := w.repo.UpdateCharacterStatus(ctx, session.CharacterID, "pending_claim"); err != nil {
+		slog.Error("worker: UpdateCharacterStatus failed", "session_id", session.ID, "err", err)
+	}
+
 	durationMinutes := int(now.Sub(session.StartedAt).Minutes())
 
 	_ = w.producer.PublishHuntResolved(ctx, dto.HuntSessionResolved{
