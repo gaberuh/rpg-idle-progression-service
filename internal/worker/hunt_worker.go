@@ -7,14 +7,13 @@ import (
 
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
-	apperr "github.com/gaberuh/rpg-idle-progression-service/internal/errors"
 	"github.com/gaberuh/rpg-idle-progression-service/internal/domain"
 	"github.com/gaberuh/rpg-idle-progression-service/internal/event"
 	"github.com/gaberuh/rpg-idle-progression-service/internal/event/dto"
 	"github.com/gaberuh/rpg-idle-progression-service/internal/repository"
 )
 
-const sessionBatchSize = 100
+const sessionBatchSize = 1000
 
 type HuntWorker struct {
 	repo      repository.HuntRepository
@@ -60,9 +59,6 @@ func (w *HuntWorker) Run(ctx context.Context) {
 
 // tick processa TODAS as sessões running usando cursor-based pagination + fan-out.
 func (w *HuntWorker) tick(ctx context.Context) {
-	// Cursor começa no início do tempo para pegar todas as sessões running.
-	// O campo last_resolved_at > cursor garante que cada sessão seja processada pelo menos uma vez por tick.
-	// Usamos um cursor fixo (epoch) por tick — todas as sessões com any last_resolved_at são elegíveis.
 	cursor := time.Time{}
 	now := time.Now().UTC()
 
@@ -79,9 +75,8 @@ func (w *HuntWorker) tick(ctx context.Context) {
 		g, gctx := errgroup.WithContext(ctx)
 
 		for _, s := range sessions {
-			s := s // capture
+			s := s
 			if err := w.sem.Acquire(gctx, 1); err != nil {
-				// ctx cancelado
 				break
 			}
 			g.Go(func() error {
@@ -123,7 +118,6 @@ func (w *HuntWorker) resolveSession(ctx context.Context, session domain.HuntSess
 
 	result := w.simulator.Resolve(session, *hunt, monsters, delta, totalElapsed)
 
-	// Persiste progresso incremental
 	deaths := 0
 	if result.Died {
 		deaths = 1
@@ -146,12 +140,12 @@ func (w *HuntWorker) resolveSession(ctx context.Context, session domain.HuntSess
 		}
 	}
 
-	// Publica HuntSessionResolved para character-service acumular XP/skills
+	// Publica tick incremental para o character-service acumular skill XP
 	kills := make(map[string]int, len(result.KillCounts))
 	for k, v := range result.KillCounts {
 		kills[k.String()] = v
 	}
-	_ = w.producer.PublishHuntResolved(ctx, dto.HuntSessionResolved{
+	_ = w.producer.PublishHuntTickResolved(ctx, dto.HuntTickResolved{
 		SessionID:    session.ID,
 		CharacterID:  session.CharacterID,
 		HuntID:       session.HuntID,
@@ -164,44 +158,70 @@ func (w *HuntWorker) resolveSession(ctx context.Context, session domain.HuntSess
 	})
 
 	if result.Died {
-		_ = w.producer.PublishDeathOccurred(ctx, dto.DeathOccurred{
-			SessionID:   session.ID,
-			CharacterID: session.CharacterID,
-			HuntID:      session.HuntID,
-			DiedAt:      session.LastResolvedAt.Add(result.TimeUntilDeath),
-		})
-
-		// Morte encerra a sessão
-		endedBy := domain.EndedByDeath
-		if err := w.repo.EndSession(ctx, session.ID, endedBy, domain.SessionPendingClaim, now); err != nil {
-			slog.Error("worker: EndSession (death) failed", "session_id", session.ID, "err", err)
-			return
-		}
-
-		_ = w.producer.PublishHuntCompleted(ctx, dto.HuntSessionCompleted{
-			SessionID:   session.ID,
-			CharacterID: session.CharacterID,
-			EndedBy:     string(endedBy),
-			CompletedAt: now,
-		})
+		w.handleDeath(ctx, session, result, now)
 		return
 	}
 
-	// Verifica se a sessão completou o tempo configurado
 	if result.Completed {
-		endedBy := domain.EndedByCompleted
-		if err := w.repo.EndSession(ctx, session.ID, endedBy, domain.SessionPendingClaim, now); err != nil {
-			slog.Error("worker: EndSession (completed) failed", "session_id", session.ID, "err", err)
-			return
-		}
+		w.handleSessionEnd(ctx, session, domain.EndedByCompleted, now)
+	}
+}
 
-		_ = w.producer.PublishHuntCompleted(ctx, dto.HuntSessionCompleted{
-			SessionID:   session.ID,
-			CharacterID: session.CharacterID,
-			EndedBy:     string(endedBy),
-			CompletedAt: now,
-		})
+// handleDeath encerra a sessão por morte, calcula penalidades e publica os eventos.
+func (w *HuntWorker) handleDeath(ctx context.Context, session domain.HuntSession, result domain.SimulationResult, now time.Time) {
+	blessings, err := w.repo.GetCharacterBlessings(ctx, session.CharacterID)
+	if err != nil {
+		slog.Error("worker: GetCharacterBlessings failed", "session_id", session.ID, "err", err)
+		blessings = 0
 	}
 
-	_ = apperr.ErrInternal // satisfaz lint de import não usado
+	xpPenalty, skillPenalty := deathPenalties(blessings)
+
+	diedAt := session.LastResolvedAt.Add(result.TimeUntilDeath)
+	_ = w.producer.PublishDeathOccurred(ctx, dto.DeathOccurred{
+		SessionID:           session.ID,
+		CharacterID:         session.CharacterID,
+		HuntID:              session.HuntID,
+		BlessingsAtDeath:    blessings,
+		XPPenaltyPercent:    xpPenalty,
+		SkillPenaltyPercent: skillPenalty,
+		DiedAt:              diedAt,
+	})
+
+	w.handleSessionEnd(ctx, session, domain.EndedByDeath, now)
+}
+
+// handleSessionEnd encerra a sessão no banco e publica HuntSessionResolved.
+func (w *HuntWorker) handleSessionEnd(ctx context.Context, session domain.HuntSession, endedBy domain.EndedBy, now time.Time) {
+	if err := w.repo.EndSession(ctx, session.ID, endedBy, domain.SessionPendingClaim, now); err != nil {
+		slog.Error("worker: EndSession failed", "session_id", session.ID, "ended_by", endedBy, "err", err)
+		return
+	}
+
+	durationMinutes := int(now.Sub(session.StartedAt).Minutes())
+
+	_ = w.producer.PublishHuntResolved(ctx, dto.HuntSessionResolved{
+		SessionID:       session.ID,
+		CharacterID:     session.CharacterID,
+		HuntID:          session.HuntID,
+		EndedBy:         string(endedBy),
+		XPGained:        session.XPGained,
+		GoldGained:      session.GoldGained,
+		DurationMinutes: durationMinutes,
+		Vocation:        string(session.SnapshotVocation),
+		ResolvedAt:      now,
+	})
+}
+
+// deathPenalties retorna os percentuais de penalidade de XP e skill baseado nas blessings.
+// Tabela definida no TSAD: 0 blessings = 10%, 1 = 3%, 2 = 1%.
+func deathPenalties(blessings int) (xpPercent, skillPercent int) {
+	switch blessings {
+	case 1:
+		return 3, 3
+	case 2:
+		return 1, 1
+	default:
+		return 10, 10
+	}
 }

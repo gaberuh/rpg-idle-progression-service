@@ -34,7 +34,6 @@ func (s *huntServiceImpl) ListHunts(ctx context.Context, cursor *repository.Hunt
 		limit = MaxPageSize
 	}
 
-	// Busca limit+1 para saber se existe próxima página sem custo extra
 	hunts, err := s.repo.ListHunts(ctx, cursor, limit+1)
 	if err != nil {
 		return nil, nil, err
@@ -73,7 +72,6 @@ func (s *huntServiceImpl) StartHunt(
 		return apperr.ErrLevelTooLow
 	}
 
-	// Verifica se já existe sessão ativa
 	existing, err := s.repo.GetActiveSession(ctx, characterID)
 	if err == nil && existing != nil {
 		return apperr.ErrHuntAlreadyActive
@@ -94,7 +92,18 @@ func (s *huntServiceImpl) StartHunt(
 		SnapshotVocation:   snapshot.SnapshotVocation,
 	}
 
-	return s.repo.CreateSession(ctx, session)
+	if err := s.repo.CreateSession(ctx, session); err != nil {
+		return err
+	}
+
+	_ = s.producer.PublishHuntStarted(ctx, dto.HuntSessionStarted{
+		SessionID:   session.ID,
+		CharacterID: characterID,
+		HuntID:      huntID,
+		StartedAt:   now,
+	})
+
+	return nil
 }
 
 func (s *huntServiceImpl) StopHunt(ctx context.Context, characterID uuid.UUID) error {
@@ -103,25 +112,29 @@ func (s *huntServiceImpl) StopHunt(ctx context.Context, characterID uuid.UUID) e
 		return err
 	}
 
+	now := time.Now().UTC()
 	endedBy := domain.EndedByPlayerStopped
-	return s.repo.EndSession(ctx, session.ID, endedBy, domain.SessionPendingClaim, time.Now().UTC())
+	if err := s.repo.EndSession(ctx, session.ID, endedBy, domain.SessionPendingClaim, now); err != nil {
+		return err
+	}
+
+	durationMinutes := int(now.Sub(session.StartedAt).Minutes())
+
+	_ = s.producer.PublishHuntResolved(ctx, dto.HuntSessionResolved{
+		SessionID:       session.ID,
+		CharacterID:     characterID,
+		HuntID:          session.HuntID,
+		EndedBy:         string(endedBy),
+		XPGained:        session.XPGained,
+		GoldGained:      session.GoldGained,
+		DurationMinutes: durationMinutes,
+		Vocation:        string(session.SnapshotVocation),
+		ResolvedAt:      now,
+	})
+
+	return nil
 }
 
 func (s *huntServiceImpl) GetActiveSession(ctx context.Context, characterID uuid.UUID) (*domain.HuntSession, error) {
 	return s.repo.GetActiveSession(ctx, characterID)
-}
-
-// completeSession é chamado pelo worker quando a sessão chega ao fim do tempo configurado.
-func (s *huntServiceImpl) completeSession(ctx context.Context, session domain.HuntSession) error {
-	endedBy := domain.EndedByCompleted
-	if err := s.repo.EndSession(ctx, session.ID, endedBy, domain.SessionPendingClaim, time.Now().UTC()); err != nil {
-		return err
-	}
-
-	return s.producer.PublishHuntCompleted(ctx, dto.HuntSessionCompleted{
-		SessionID:   session.ID,
-		CharacterID: session.CharacterID,
-		EndedBy:     string(endedBy),
-		CompletedAt: time.Now().UTC(),
-	})
 }

@@ -10,15 +10,14 @@ import (
 )
 
 const (
-	TopicHuntSessionResolved  = "hunt.session.resolved"
-	TopicDeathOccurred        = "hunt.death.occurred"
-	TopicHuntSessionCompleted = "hunt.session.completed"
+	TopicProgressionEvents = "progression-events"
 )
 
 type HuntProducer interface {
+	PublishHuntStarted(ctx context.Context, event dto.HuntSessionStarted) error
+	PublishHuntTickResolved(ctx context.Context, event dto.HuntTickResolved) error
 	PublishHuntResolved(ctx context.Context, event dto.HuntSessionResolved) error
 	PublishDeathOccurred(ctx context.Context, event dto.DeathOccurred) error
-	PublishHuntCompleted(ctx context.Context, event dto.HuntSessionCompleted) error
 }
 
 type kafkaProducer struct {
@@ -28,7 +27,7 @@ type kafkaProducer struct {
 func NewHuntProducer(brokers []string) (HuntProducer, error) {
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(brokers...),
-		kgo.DefaultProduceTopic(TopicHuntSessionResolved),
+		kgo.DefaultProduceTopic(TopicProgressionEvents),
 	)
 	if err != nil {
 		return nil, err
@@ -36,16 +35,20 @@ func NewHuntProducer(brokers []string) (HuntProducer, error) {
 	return &kafkaProducer{client: client}, nil
 }
 
+func (p *kafkaProducer) PublishHuntStarted(ctx context.Context, event dto.HuntSessionStarted) error {
+	return p.publish(ctx, TopicProgressionEvents, event.CharacterID.String(), event)
+}
+
+func (p *kafkaProducer) PublishHuntTickResolved(ctx context.Context, event dto.HuntTickResolved) error {
+	return p.publish(ctx, TopicProgressionEvents, event.CharacterID.String(), event)
+}
+
 func (p *kafkaProducer) PublishHuntResolved(ctx context.Context, event dto.HuntSessionResolved) error {
-	return p.publish(ctx, TopicHuntSessionResolved, event.CharacterID.String(), event)
+	return p.publish(ctx, TopicProgressionEvents, event.CharacterID.String(), event)
 }
 
 func (p *kafkaProducer) PublishDeathOccurred(ctx context.Context, event dto.DeathOccurred) error {
-	return p.publish(ctx, TopicDeathOccurred, event.CharacterID.String(), event)
-}
-
-func (p *kafkaProducer) PublishHuntCompleted(ctx context.Context, event dto.HuntSessionCompleted) error {
-	return p.publish(ctx, TopicHuntSessionCompleted, event.CharacterID.String(), event)
+	return p.publish(ctx, TopicProgressionEvents, event.CharacterID.String(), event)
 }
 
 func (p *kafkaProducer) publish(ctx context.Context, topic, key string, payload any) error {
