@@ -53,4 +53,8 @@ type HuntRepository interface {
 
 	// GetSessionLoot retorna o loot da sessão com nome do item, ordenado por raridade DESC.
 	GetSessionLoot(ctx context.Context, sessionID uuid.UUID) ([]domain.SessionLootEntry, error)
+
+	// UpdateCharacterStatus atualiza characters.status pelo player_id.
+	// Chamado pelo progression-service diretamente (banco compartilhado) ao iniciar, parar ou encerrar hunt.
+	UpdateCharacterStatus(ctx context.Context, playerID uuid.UUID, status string) error
 }

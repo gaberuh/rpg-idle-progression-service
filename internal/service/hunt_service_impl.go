@@ -115,6 +115,11 @@ func (s *huntServiceImpl) StartHunt(
 		return nil, err
 	}
 
+	// Atualiza status do personagem para 'hunting' — guard para impedir ações concorrentes
+	if err := s.repo.UpdateCharacterStatus(ctx, characterID, "hunting"); err != nil {
+		return nil, err
+	}
+
 	_ = s.producer.PublishHuntStarted(ctx, dto.HuntSessionStarted{
 		SessionID:   session.ID,
 		CharacterID: characterID,
@@ -141,6 +146,11 @@ func (s *huntServiceImpl) StopHunt(ctx context.Context, characterID uuid.UUID) (
 	now := time.Now().UTC()
 	endedBy := domain.EndedByPlayerStopped
 	if err := s.repo.EndSession(ctx, session.ID, endedBy, domain.SessionPendingClaim, now); err != nil {
+		return nil, err
+	}
+
+	// Atualiza status do personagem para 'pending_claim' — bloqueia novas ações até resgate do loot
+	if err := s.repo.UpdateCharacterStatus(ctx, characterID, "pending_claim"); err != nil {
 		return nil, err
 	}
 
