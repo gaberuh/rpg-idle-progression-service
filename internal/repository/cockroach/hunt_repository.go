@@ -326,7 +326,7 @@ func (r *huntRepository) GetCharacterSnapshot(ctx context.Context, characterID u
 		return nil, apperr.ErrCharacterNotIdle
 	}
 
-	const qSkills = `SELECT skill_type, level FROM character_skills WHERE character_id = $1`
+	const qSkills = `SELECT skill_type, current_level FROM character_skills WHERE character_id = $1`
 	rows, err := r.db.Query(ctx, qSkills, characterID)
 	if err != nil {
 		return nil, dbErr("GetCharacterSnapshot.skills", err)
@@ -345,9 +345,9 @@ func (r *huntRepository) GetCharacterSnapshot(ctx context.Context, characterID u
 
 	const qEquip = `
 		SELECT ce.slot, it.name,
-		    COALESCE((di.affixes->>'attack')::int, 0),
-		    COALESCE((di.affixes->>'defense')::int, 0),
-		    COALESCE((di.affixes->>'armor')::int, 0),
+		    COALESCE((it.base_stats->>'attack')::int, 0),
+		    COALESCE((it.base_stats->>'defense')::int, 0),
+		    COALESCE((it.base_stats->>'armor')::int, 0),
 		    di.id::text
 		FROM character_equipment ce
 		JOIN deposit_items di ON di.id = ce.item_id
