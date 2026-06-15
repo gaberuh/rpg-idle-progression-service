@@ -354,25 +354,28 @@ func (r *huntRepository) GetCharacterSnapshot(ctx context.Context, characterID u
 		JOIN item_templates it ON it.id = di.template_id
 		WHERE ce.character_id = $1`
 
+	equipment := make(domain.SnapshotEquipment)
 	eqRows, err := r.db.Query(ctx, qEquip, characterID)
 	if err != nil {
-		return nil, dbErr("GetCharacterSnapshot.equip", err)
-	}
-	defer eqRows.Close()
-
-	equipment := make(domain.SnapshotEquipment)
-	for eqRows.Next() {
-		var slot, name, itemID string
-		var attack, defense, armor int
-		if err := eqRows.Scan(&slot, &name, &attack, &defense, &armor, &itemID); err != nil {
-			return nil, dbErr("GetCharacterSnapshot.equip.scan", err)
-		}
-		equipment[slot] = &domain.SnapshotItem{
-			ItemID:  itemID,
-			Name:    name,
-			Attack:  attack,
-			Defense: defense,
-			Armor:   armor,
+		// deposit_items/character_equipment podem não existir ainda (inventory-service não implementado).
+		// Snapshot com equipment vazio é válido — o personagem simplesmente não usa bônus de itens.
+		slog.Warn("GetCharacterSnapshot: equipment query failed, proceeding with empty equipment", "err", err)
+	} else {
+		defer eqRows.Close()
+		for eqRows.Next() {
+			var slot, name, itemID string
+			var attack, defense, armor int
+			if err := eqRows.Scan(&slot, &name, &attack, &defense, &armor, &itemID); err != nil {
+				slog.Warn("GetCharacterSnapshot: equipment scan failed", "err", err)
+				break
+			}
+			equipment[slot] = &domain.SnapshotItem{
+				ItemID:  itemID,
+				Name:    name,
+				Attack:  attack,
+				Defense: defense,
+				Armor:   armor,
+			}
 		}
 	}
 
