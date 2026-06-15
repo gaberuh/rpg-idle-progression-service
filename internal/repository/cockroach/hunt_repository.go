@@ -45,13 +45,32 @@ func (r *huntRepository) GetHuntByID(ctx context.Context, id uuid.UUID) (*domain
 	return h, nil
 }
 
-// ListHunts retorna todo o catálogo de hunts.
-func (r *huntRepository) ListHunts(ctx context.Context) ([]domain.Hunt, error) {
-	const q = `
-		SELECT id, name, recommended_level, difficulty, xp_per_hour, gold_per_hour, mortality_rate
-		FROM hunts ORDER BY recommended_level`
+// ListHunts retorna hunts com keyset pagination por (recommended_level, id).
+// cursor nil = primeira página. limit máximo respeitado pelo caller (service).
+func (r *huntRepository) ListHunts(ctx context.Context, cursor *repository.HuntCursor, limit int) ([]domain.Hunt, error) {
+	var (
+		rows pgx.Rows
+		err  error
+	)
 
-	rows, err := r.db.Query(ctx, q)
+	if cursor == nil {
+		const q = `
+			SELECT id, name, recommended_level, difficulty, xp_per_hour, gold_per_hour, mortality_rate
+			FROM hunts
+			ORDER BY recommended_level ASC, id ASC
+			LIMIT $1`
+		rows, err = r.db.Query(ctx, q, limit)
+	} else {
+		// Keyset: pega a próxima página depois do cursor (level, id)
+		const q = `
+			SELECT id, name, recommended_level, difficulty, xp_per_hour, gold_per_hour, mortality_rate
+			FROM hunts
+			WHERE (recommended_level, id) > ($1, $2)
+			ORDER BY recommended_level ASC, id ASC
+			LIMIT $3`
+		rows, err = r.db.Query(ctx, q, cursor.RecommendedLevel, cursor.ID, limit)
+	}
+
 	if err != nil {
 		return nil, dbErr("ListHunts", err)
 	}

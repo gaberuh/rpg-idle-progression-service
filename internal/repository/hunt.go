@@ -8,10 +8,20 @@ import (
 	"github.com/gaberuh/rpg-idle-progression-service/internal/domain"
 )
 
+// HuntCursor é o cursor de paginação para ListHunts.
+// Codifica a posição da última hunt retornada como (recommended_level, id).
+type HuntCursor struct {
+	RecommendedLevel int
+	ID               uuid.UUID
+}
+
 type HuntRepository interface {
 	// Catalog
 	GetHuntByID(ctx context.Context, id uuid.UUID) (*domain.Hunt, error)
-	ListHunts(ctx context.Context) ([]domain.Hunt, error)
+	// ListHunts retorna hunts com keyset pagination.
+	// cursor: último (recommended_level, id) visto — nil = primeira página.
+	// limit: quantidade de itens por página (máx 100).
+	ListHunts(ctx context.Context, cursor *HuntCursor, limit int) ([]domain.Hunt, error)
 	GetHuntMonsters(ctx context.Context, huntID uuid.UUID) ([]domain.MonsterWithSpawnRate, error)
 
 	// Sessions
