@@ -63,6 +63,12 @@ func main() {
 	}
 	defer db.Close()
 
+	// Kafka: garante que os tópicos existem antes de produzir
+	if err := event.EnsureTopics(ctx, cfg.Kafka.Brokers); err != nil {
+		slog.Error("kafka ensure topics failed", "err", err)
+		os.Exit(1)
+	}
+
 	// Kafka producer
 	producer, err := event.NewHuntProducer(cfg.Kafka.Brokers)
 	if err != nil {
