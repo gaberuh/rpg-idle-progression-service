@@ -294,18 +294,63 @@ func (r *huntRepository) ListRunningSessions(ctx context.Context, after time.Tim
 	return sessions, nil
 }
 
-// GetCharacterBlessings retorna a quantidade de blessings ativas do personagem.
-func (r *huntRepository) GetCharacterBlessings(ctx context.Context, characterID uuid.UUID) (int, error) {
-	const q = `SELECT quantity FROM character_blessings WHERE character_id = $1`
-	var qty int
-	err := r.db.QueryRow(ctx, q, characterID).Scan(&qty)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, nil
-	}
+// GetSessionKillCounts retorna kills por monstro com nome, ordenado por kill_count DESC.
+func (r *huntRepository) GetSessionKillCounts(ctx context.Context, sessionID uuid.UUID) ([]domain.SessionKillCount, error) {
+	const q = `
+		SELECT m.name, hkc.kill_count
+		FROM hunt_kill_counts hkc
+		JOIN monsters m ON m.id = hkc.monster_id
+		WHERE hkc.session_id = $1
+		ORDER BY hkc.kill_count DESC`
+
+	rows, err := r.db.Query(ctx, q, sessionID)
 	if err != nil {
-		return 0, dbErr("GetCharacterBlessings", err)
+		return nil, dbErr("GetSessionKillCounts", err)
 	}
-	return qty, nil
+	defer rows.Close()
+
+	var result []domain.SessionKillCount
+	for rows.Next() {
+		var kc domain.SessionKillCount
+		if err := rows.Scan(&kc.MonsterName, &kc.KillCount); err != nil {
+			return nil, dbErr("GetSessionKillCounts.scan", err)
+		}
+		result = append(result, kc)
+	}
+	return result, nil
+}
+
+// GetSessionLoot retorna o loot da sessão com nome do item, ordenado por raridade DESC.
+// A ordem de raridade segue: legendary > epic > rare > uncommon > common.
+func (r *huntRepository) GetSessionLoot(ctx context.Context, sessionID uuid.UUID) ([]domain.SessionLootEntry, error) {
+	const q = `
+		SELECT it.name, sl.rarity, sl.quantity, sl.item_ids
+		FROM session_loot sl
+		JOIN item_templates it ON it.id = sl.template_id
+		WHERE sl.session_id = $1
+		ORDER BY CASE sl.rarity
+			WHEN 'legendary' THEN 1
+			WHEN 'epic'      THEN 2
+			WHEN 'rare'      THEN 3
+			WHEN 'uncommon'  THEN 4
+			ELSE 5
+		END ASC`
+
+	rows, err := r.db.Query(ctx, q, sessionID)
+	if err != nil {
+		return nil, dbErr("GetSessionLoot", err)
+	}
+	defer rows.Close()
+
+	var result []domain.SessionLootEntry
+	for rows.Next() {
+		var e domain.SessionLootEntry
+		if err := rows.Scan(&e.ItemName, &e.Rarity, &e.Quantity, &e.ItemIDs); err != nil {
+			return nil, dbErr("GetSessionLoot.scan", err)
+		}
+		result = append(result, e)
+	}
+	return result, nil
 }
 
 // scanner comum para pgx.Row e pgx.Rows
