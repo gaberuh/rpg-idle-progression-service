@@ -42,6 +42,14 @@ type HuntResponse struct {
 	GoldPerHour      int64     `json:"gold_per_hour"`
 }
 
+// ListHuntsResponse envolve os itens e o cursor para a próxima página.
+// O front envia o next_cursor de volta via query param ?cursor= na próxima requisição.
+type ListHuntsResponse struct {
+	Items      []HuntResponse `json:"items"`
+	NextCursor *string        `json:"next_cursor"` // nil = última página
+	Total      int            `json:"total"`        // total de itens nesta página
+}
+
 // ActiveSessionResponse é o estado atual da sessão de hunt.
 type ActiveSessionResponse struct {
 	SessionID          uuid.UUID  `json:"session_id"`

@@ -26,8 +26,31 @@ func NewHuntService(repo repository.HuntRepository, producer event.HuntProducer)
 	return &huntServiceImpl{repo: repo, producer: producer}
 }
 
-func (s *huntServiceImpl) ListHunts(ctx context.Context) ([]domain.Hunt, error) {
-	return s.repo.ListHunts(ctx)
+func (s *huntServiceImpl) ListHunts(ctx context.Context, cursor *repository.HuntCursor, limit int) ([]domain.Hunt, *repository.HuntCursor, error) {
+	if limit <= 0 {
+		limit = DefaultPageSize
+	}
+	if limit > MaxPageSize {
+		limit = MaxPageSize
+	}
+
+	// Busca limit+1 para saber se existe próxima página sem custo extra
+	hunts, err := s.repo.ListHunts(ctx, cursor, limit+1)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var nextCursor *repository.HuntCursor
+	if len(hunts) > limit {
+		last := hunts[limit-1]
+		nextCursor = &repository.HuntCursor{
+			RecommendedLevel: last.RecommendedLevel,
+			ID:               last.ID,
+		}
+		hunts = hunts[:limit]
+	}
+
+	return hunts, nextCursor, nil
 }
 
 func (s *huntServiceImpl) StartHunt(

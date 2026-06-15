@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
@@ -11,6 +14,7 @@ import (
 	"github.com/gaberuh/rpg-idle-progression-service/internal/domain"
 	httpdto "github.com/gaberuh/rpg-idle-progression-service/internal/dto"
 	"github.com/gaberuh/rpg-idle-progression-service/internal/middleware"
+	"github.com/gaberuh/rpg-idle-progression-service/internal/repository"
 	"github.com/gaberuh/rpg-idle-progression-service/internal/service"
 )
 
@@ -25,24 +29,84 @@ func NewHuntHandler(svc service.HuntService) *HuntHandler {
 }
 
 // ListHunts godoc
-// @Summary     Lista hunts disponíveis
+// @Summary     Lista hunts disponíveis com paginação por cursor
 // @Tags        hunts
 // @Security    BearerAuth
 // @Produce     json
-// @Success     200 {array} dto.HuntResponse
+// @Param       cursor query string false "Cursor da página anterior (opaque, retornado em next_cursor)"
+// @Param       limit  query int    false "Itens por página (padrão 20, máx 100)"
+// @Success     200 {object} dto.ListHuntsResponse
 // @Router      /api/v1/hunts [get]
 func (h *HuntHandler) ListHunts(w http.ResponseWriter, r *http.Request) {
-	hunts, err := h.svc.ListHunts(r.Context())
+	limit := service.DefaultPageSize
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			writeErr(w, apperr.ErrValidation)
+			return
+		}
+		limit = n
+	}
+
+	var cursor *repository.HuntCursor
+	if v := r.URL.Query().Get("cursor"); v != "" {
+		c, err := decodeCursor(v)
+		if err != nil {
+			writeErr(w, apperr.ErrValidation)
+			return
+		}
+		cursor = c
+	}
+
+	hunts, nextCursor, err := h.svc.ListHunts(r.Context(), cursor, limit)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	resp := make([]httpdto.HuntResponse, len(hunts))
+	items := make([]httpdto.HuntResponse, len(hunts))
 	for i, hunt := range hunts {
-		resp[i] = toHuntResponse(hunt)
+		items[i] = toHuntResponse(hunt)
 	}
-	writeJSON(w, http.StatusOK, resp)
+
+	var nextCursorStr *string
+	if nextCursor != nil {
+		s := encodeCursor(nextCursor)
+		nextCursorStr = &s
+	}
+
+	writeJSON(w, http.StatusOK, httpdto.ListHuntsResponse{
+		Items:      items,
+		NextCursor: nextCursorStr,
+		Total:      len(items),
+	})
+}
+
+// cursorPayload é o formato interno serializado em base64 no cursor opaco.
+type cursorPayload struct {
+	Level int    `json:"l"`
+	ID    string `json:"i"`
+}
+
+func encodeCursor(c *repository.HuntCursor) string {
+	b, _ := json.Marshal(cursorPayload{Level: c.RecommendedLevel, ID: c.ID.String()})
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func decodeCursor(s string) (*repository.HuntCursor, error) {
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("cursor inválido")
+	}
+	var p cursorPayload
+	if err := json.Unmarshal(b, &p); err != nil {
+		return nil, fmt.Errorf("cursor inválido")
+	}
+	id, err := uuid.Parse(p.ID)
+	if err != nil {
+		return nil, fmt.Errorf("cursor inválido")
+	}
+	return &repository.HuntCursor{RecommendedLevel: p.Level, ID: id}, nil
 }
 
 // StartHunt godoc
@@ -203,5 +267,3 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// Satisfaz o compilador — uuid é usado indiretamente via middleware
-var _ = uuid.Nil
