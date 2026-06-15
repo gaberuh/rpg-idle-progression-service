@@ -326,7 +326,7 @@ func (r *huntRepository) GetCharacterSnapshot(ctx context.Context, characterID u
 		return nil, apperr.ErrCharacterNotIdle
 	}
 
-	const qSkills = `SELECT skill_type, level FROM character_skills WHERE character_id = $1`
+	const qSkills = `SELECT skill_type, current_level FROM character_skills WHERE character_id = $1`
 	rows, err := r.db.Query(ctx, qSkills, characterID)
 	if err != nil {
 		return nil, dbErr("GetCharacterSnapshot.skills", err)
@@ -345,34 +345,37 @@ func (r *huntRepository) GetCharacterSnapshot(ctx context.Context, characterID u
 
 	const qEquip = `
 		SELECT ce.slot, it.name,
-		    COALESCE((di.affixes->>'attack')::int, 0),
-		    COALESCE((di.affixes->>'defense')::int, 0),
-		    COALESCE((di.affixes->>'armor')::int, 0),
+		    COALESCE((it.base_stats->>'attack')::int, 0),
+		    COALESCE((it.base_stats->>'defense')::int, 0),
+		    COALESCE((it.base_stats->>'armor')::int, 0),
 		    di.id::text
 		FROM character_equipment ce
 		JOIN deposit_items di ON di.id = ce.item_id
 		JOIN item_templates it ON it.id = di.template_id
 		WHERE ce.character_id = $1`
 
+	equipment := make(domain.SnapshotEquipment)
 	eqRows, err := r.db.Query(ctx, qEquip, characterID)
 	if err != nil {
-		return nil, dbErr("GetCharacterSnapshot.equip", err)
-	}
-	defer eqRows.Close()
-
-	equipment := make(domain.SnapshotEquipment)
-	for eqRows.Next() {
-		var slot, name, itemID string
-		var attack, defense, armor int
-		if err := eqRows.Scan(&slot, &name, &attack, &defense, &armor, &itemID); err != nil {
-			return nil, dbErr("GetCharacterSnapshot.equip.scan", err)
-		}
-		equipment[slot] = &domain.SnapshotItem{
-			ItemID:  itemID,
-			Name:    name,
-			Attack:  attack,
-			Defense: defense,
-			Armor:   armor,
+		// deposit_items/character_equipment podem não existir ainda (inventory-service não implementado).
+		// Snapshot com equipment vazio é válido — o personagem simplesmente não usa bônus de itens.
+		slog.Warn("GetCharacterSnapshot: equipment query failed, proceeding with empty equipment", "err", err)
+	} else {
+		defer eqRows.Close()
+		for eqRows.Next() {
+			var slot, name, itemID string
+			var attack, defense, armor int
+			if err := eqRows.Scan(&slot, &name, &attack, &defense, &armor, &itemID); err != nil {
+				slog.Warn("GetCharacterSnapshot: equipment scan failed", "err", err)
+				break
+			}
+			equipment[slot] = &domain.SnapshotItem{
+				ItemID:  itemID,
+				Name:    name,
+				Attack:  attack,
+				Defense: defense,
+				Armor:   armor,
+			}
 		}
 	}
 
