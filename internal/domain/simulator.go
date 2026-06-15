@@ -63,57 +63,57 @@ func (s *combatSimulator) Resolve(
 	attackPower := calcAttackPower(session)
 	defPower := calcDefensePower(session)
 
-	// Eficiência de kills baseada na build vs hunt
-	// Base: hunt.xp_per_hour como referência de kills/hora no nível recomendado
-	// Ajuste por attack power (simplificado — BRD define os multiplicadores exatos)
-	killEfficiency := math.Min(2.0, math.Max(0.1, float64(attackPower)/100.0))
-	killsPerHour := float64(hunt.XPPerHour) / 50.0 * killEfficiency // 50 xp base por kill
-	killsInInterval := killsPerHour / 60.0 * deltaMinutes
-
-	xpInInterval := int64(killsInInterval * float64(hunt.XPPerHour) / killsPerHour)
-	if killsPerHour > 0 {
-		xpInInterval = int64(killsInInterval * 50 * killEfficiency)
+	// XP médio ponderado por spawn_rate — usa monster.xp_reward como fonte de verdade
+	avgXPPerKill := 0.0
+	for _, m := range monsters {
+		avgXPPerKill += float64(m.Monster.XPReward) * m.SpawnRate
 	}
+	if avgXPPerKill <= 0 {
+		avgXPPerKill = 1
+	}
+
+	// Eficiência de kills: escala linear com attack power, sem aplicar duas vezes
+	killEfficiency := math.Min(2.0, math.Max(0.1, float64(attackPower)/100.0))
+	// Kill rate: hunt.xp_per_hour / avgXPPerKill define quantos monstros/hora no nível recomendado
+	killsPerHour := float64(hunt.XPPerHour) / avgXPPerKill * killEfficiency
+	killsInInterval := killsPerHour / 60.0 * deltaMinutes
 
 	// Gold: variação ±20% sobre gold_per_hour
 	goldBase := float64(hunt.GoldPerHour) / 60.0 * deltaMinutes
 	goldVariance := goldBase * 0.2 * (rand.Float64()*2 - 1)
 	goldInInterval := int64(math.Max(0, goldBase+goldVariance))
 
-	// Mortalidade: probabilidade de morte no intervalo
-	// mortality_rate é por hora; escala para o delta
+	// Mortalidade: probability of death no intervalo
 	deathProb := hunt.MortalityRate * deltaMinutes / 60.0
-	// Mitigation reduz probabilidade de morte
 	mitigationFactor := math.Min(0.8, float64(defPower)/200.0)
 	deathProb *= (1 - mitigationFactor)
 
 	died := rand.Float64() < deathProb
 	var timeUntilDeath time.Duration
+	deathFraction := 1.0
 	if died {
-		// Momento da morte dentro do intervalo
 		timeUntilDeath = time.Duration(rand.Float64() * float64(delta))
-		// Recalcula XP e gold até o momento da morte
-		fraction := float64(timeUntilDeath) / float64(delta)
-		xpInInterval = int64(float64(xpInInterval) * fraction)
-		goldInInterval = int64(float64(goldInInterval) * fraction)
+		deathFraction = float64(timeUntilDeath) / float64(delta)
+		goldInInterval = int64(float64(goldInInterval) * deathFraction)
 	}
 
-	// Kill counts por monstro
+	// Kill counts por monstro + XP real via monster.xp_reward
 	killCounts := make(map[uuid.UUID]int, len(monsters))
 	lootDrops := make(map[uuid.UUID]LootDrop)
+	var xpInInterval int64
 
 	for _, m := range monsters {
-		monsterKills := int(math.Round(killsInInterval * m.SpawnRate))
+		monsterKills := int(math.Round(killsInInterval * m.SpawnRate * deathFraction))
 		if monsterKills <= 0 {
 			continue
 		}
 		killCounts[m.Monster.ID] = monsterKills
+		xpInInterval += int64(monsterKills) * int64(m.Monster.XPReward)
 
 		for _, entry := range m.Monster.LootTable {
 			drops := int(math.Floor(float64(monsterKills) * entry.DropChance))
 			if drops <= 0 {
-				// Chance fracionária: rolar para cada kill individual seria caro.
-				// Aproximamos: se monsterKills * dropChance >= 0.5, garante 1 drop.
+				// Chance fracionária: se monsterKills * dropChance >= 0.5, garante 1 drop
 				if float64(monsterKills)*entry.DropChance >= 0.5 {
 					drops = 1
 				} else {
