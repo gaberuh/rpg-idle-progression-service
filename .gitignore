@@ -1,0 +1,9 @@
+.env
+*.env
+bin/
+dist/
+vendor/
+*.test
+coverage.out
+docs/swagger.json
+docs/swagger.yaml
