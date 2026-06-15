@@ -95,9 +95,10 @@ func main() {
 	r.Route("/api/v1/hunts", func(r chi.Router) {
 		r.Use(middleware.Auth(cfg.JWT.Secret))
 		r.Get("/", huntHandler.ListHunts)
-		r.Get("/active", huntHandler.GetActiveSession)
-		r.Post("/start", huntHandler.StartHunt)
-		r.Post("/stop", huntHandler.StopHunt)
+		r.Get("/current", huntHandler.GetActiveSession)
+		r.Post("/current/stop", huntHandler.StopHunt)
+		r.Get("/sessions/{session_id}", huntHandler.GetSessionResult)
+		r.Post("/{hunt_id}/start", huntHandler.StartHunt)
 	})
 
 	srv := &http.Server{

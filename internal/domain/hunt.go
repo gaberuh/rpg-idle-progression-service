@@ -116,9 +116,32 @@ type KillCount struct {
 }
 
 type SessionLoot struct {
-	SessionID  uuid.UUID  `db:"session_id"`
-	TemplateID uuid.UUID  `db:"template_id"`
-	Quantity   int        `db:"quantity"`
-	ItemIDs    []uuid.UUID
-	Rarity     string     `db:"rarity"`
+	SessionID  uuid.UUID   `db:"session_id"`
+	TemplateID uuid.UUID   `db:"template_id"`
+	Quantity   int         `db:"quantity"`
+	ItemIDs    []uuid.UUID `db:"item_ids"`
+	Rarity     string      `db:"rarity"`
+}
+
+// CharacterSnapshot captura o estado do personagem no momento de início da hunt.
+// Lido do banco pelo servidor — não enviado pelo cliente.
+type CharacterSnapshot struct {
+	Level     int
+	Vocation  Vocation
+	Skills    SnapshotSkills
+	Equipment SnapshotEquipment
+}
+
+// SessionKillCount é usado no resultado da sessão (join com monsters).
+type SessionKillCount struct {
+	MonsterName string
+	KillCount   int
+}
+
+// SessionLootEntry é usado no resultado da sessão (join com item_templates).
+type SessionLootEntry struct {
+	ItemName string
+	Rarity   string
+	Quantity int
+	ItemIDs  []uuid.UUID // não-nulo apenas para itens únicos
 }

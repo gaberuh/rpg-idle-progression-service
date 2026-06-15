@@ -238,10 +238,10 @@ func (r *huntRepository) EndSession(ctx context.Context, id uuid.UUID, endedBy d
 func (r *huntRepository) UpsertKillCounts(ctx context.Context, sessionID uuid.UUID, kills map[uuid.UUID]int) error {
 	for monsterID, count := range kills {
 		const q = `
-			INSERT INTO hunt_session_kills (session_id, monster_id, kill_count)
+			INSERT INTO hunt_kill_counts (session_id, monster_id, kill_count)
 			VALUES ($1, $2, $3)
 			ON CONFLICT (session_id, monster_id)
-			DO UPDATE SET kill_count = hunt_session_kills.kill_count + EXCLUDED.kill_count`
+			DO UPDATE SET kill_count = hunt_kill_counts.kill_count + EXCLUDED.kill_count`
 
 		if _, err := r.db.Exec(ctx, q, sessionID, monsterID, count); err != nil {
 			return dbErr("UpsertKillCounts", err)
@@ -254,10 +254,10 @@ func (r *huntRepository) UpsertKillCounts(ctx context.Context, sessionID uuid.UU
 func (r *huntRepository) UpsertSessionLoot(ctx context.Context, sessionID uuid.UUID, loot map[uuid.UUID]domain.LootDrop) error {
 	for templateID, drop := range loot {
 		const q = `
-			INSERT INTO hunt_session_loot (session_id, template_id, quantity, rarity)
+			INSERT INTO session_loot (session_id, template_id, quantity, rarity)
 			VALUES ($1, $2, $3, $4)
 			ON CONFLICT (session_id, template_id)
-			DO UPDATE SET quantity = hunt_session_loot.quantity + EXCLUDED.quantity`
+			DO UPDATE SET quantity = session_loot.quantity + EXCLUDED.quantity`
 
 		if _, err := r.db.Exec(ctx, q, sessionID, templateID, drop.Quantity, drop.Rarity); err != nil {
 			return dbErr("UpsertSessionLoot", err)
@@ -292,6 +292,169 @@ func (r *huntRepository) ListRunningSessions(ctx context.Context, after time.Tim
 		sessions = append(sessions, *s)
 	}
 	return sessions, nil
+}
+
+// GetCharacterLevel retorna o level e status do personagem para calcular available em ListHunts.
+func (r *huntRepository) GetCharacterLevel(ctx context.Context, characterID uuid.UUID) (int, string, error) {
+	const q = `SELECT level, status FROM characters WHERE id = $1`
+	var level int
+	var status string
+	err := r.db.QueryRow(ctx, q, characterID).Scan(&level, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, "", apperr.ErrCharacterNotFound
+	}
+	if err != nil {
+		return 0, "", dbErr("GetCharacterLevel", err)
+	}
+	return level, status, nil
+}
+
+// GetCharacterSnapshot captura o estado completo do personagem para o snapshot da hunt.
+// Lê characters, character_skills e character_equipment com stats dos itens.
+func (r *huntRepository) GetCharacterSnapshot(ctx context.Context, characterID uuid.UUID) (*domain.CharacterSnapshot, error) {
+	const qChar = `SELECT level, vocation, status FROM characters WHERE id = $1`
+	var level int
+	var vocation string
+	var status string
+	if err := r.db.QueryRow(ctx, qChar, characterID).Scan(&level, &vocation, &status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.ErrCharacterNotFound
+		}
+		return nil, dbErr("GetCharacterSnapshot.char", err)
+	}
+	if status != "idle" {
+		return nil, apperr.ErrCharacterNotIdle
+	}
+
+	const qSkills = `SELECT skill_type, level FROM character_skills WHERE character_id = $1`
+	rows, err := r.db.Query(ctx, qSkills, characterID)
+	if err != nil {
+		return nil, dbErr("GetCharacterSnapshot.skills", err)
+	}
+	defer rows.Close()
+
+	skills := make(domain.SnapshotSkills)
+	for rows.Next() {
+		var skillType string
+		var skillLevel int
+		if err := rows.Scan(&skillType, &skillLevel); err != nil {
+			return nil, dbErr("GetCharacterSnapshot.skills.scan", err)
+		}
+		skills[skillType] = domain.SnapshotSkill{Level: skillLevel}
+	}
+
+	const qEquip = `
+		SELECT ce.slot, it.name,
+		    COALESCE((di.affixes->>'attack')::int, 0),
+		    COALESCE((di.affixes->>'defense')::int, 0),
+		    COALESCE((di.affixes->>'armor')::int, 0),
+		    di.id::text
+		FROM character_equipment ce
+		JOIN deposit_items di ON di.id = ce.item_id
+		JOIN item_templates it ON it.id = di.template_id
+		WHERE ce.character_id = $1`
+
+	eqRows, err := r.db.Query(ctx, qEquip, characterID)
+	if err != nil {
+		return nil, dbErr("GetCharacterSnapshot.equip", err)
+	}
+	defer eqRows.Close()
+
+	equipment := make(domain.SnapshotEquipment)
+	for eqRows.Next() {
+		var slot, name, itemID string
+		var attack, defense, armor int
+		if err := eqRows.Scan(&slot, &name, &attack, &defense, &armor, &itemID); err != nil {
+			return nil, dbErr("GetCharacterSnapshot.equip.scan", err)
+		}
+		equipment[slot] = &domain.SnapshotItem{
+			ItemID:  itemID,
+			Name:    name,
+			Attack:  attack,
+			Defense: defense,
+			Armor:   armor,
+		}
+	}
+
+	return &domain.CharacterSnapshot{
+		Level:     level,
+		Vocation:  domain.Vocation(vocation),
+		Skills:    skills,
+		Equipment: equipment,
+	}, nil
+}
+
+// GetCharacterBlessings retorna a quantidade de blessings ativas do personagem.
+func (r *huntRepository) GetCharacterBlessings(ctx context.Context, characterID uuid.UUID) (int, error) {
+	const q = `SELECT quantity FROM character_blessings WHERE character_id = $1`
+	var qty int
+	err := r.db.QueryRow(ctx, q, characterID).Scan(&qty)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, dbErr("GetCharacterBlessings", err)
+	}
+	return qty, nil
+}
+
+// GetSessionKillCounts retorna kills por monstro com nome, ordenado por kill_count DESC.
+func (r *huntRepository) GetSessionKillCounts(ctx context.Context, sessionID uuid.UUID) ([]domain.SessionKillCount, error) {
+	const q = `
+		SELECT m.name, hkc.kill_count
+		FROM hunt_kill_counts hkc
+		JOIN monsters m ON m.id = hkc.monster_id
+		WHERE hkc.session_id = $1
+		ORDER BY hkc.kill_count DESC`
+
+	rows, err := r.db.Query(ctx, q, sessionID)
+	if err != nil {
+		return nil, dbErr("GetSessionKillCounts", err)
+	}
+	defer rows.Close()
+
+	var result []domain.SessionKillCount
+	for rows.Next() {
+		var kc domain.SessionKillCount
+		if err := rows.Scan(&kc.MonsterName, &kc.KillCount); err != nil {
+			return nil, dbErr("GetSessionKillCounts.scan", err)
+		}
+		result = append(result, kc)
+	}
+	return result, nil
+}
+
+// GetSessionLoot retorna o loot da sessão com nome do item, ordenado por raridade DESC.
+// A ordem de raridade segue: legendary > epic > rare > uncommon > common.
+func (r *huntRepository) GetSessionLoot(ctx context.Context, sessionID uuid.UUID) ([]domain.SessionLootEntry, error) {
+	const q = `
+		SELECT it.name, sl.rarity, sl.quantity, sl.item_ids
+		FROM session_loot sl
+		JOIN item_templates it ON it.id = sl.template_id
+		WHERE sl.session_id = $1
+		ORDER BY CASE sl.rarity
+			WHEN 'legendary' THEN 1
+			WHEN 'epic'      THEN 2
+			WHEN 'rare'      THEN 3
+			WHEN 'uncommon'  THEN 4
+			ELSE 5
+		END ASC`
+
+	rows, err := r.db.Query(ctx, q, sessionID)
+	if err != nil {
+		return nil, dbErr("GetSessionLoot", err)
+	}
+	defer rows.Close()
+
+	var result []domain.SessionLootEntry
+	for rows.Next() {
+		var e domain.SessionLootEntry
+		if err := rows.Scan(&e.ItemName, &e.Rarity, &e.Quantity, &e.ItemIDs); err != nil {
+			return nil, dbErr("GetSessionLoot.scan", err)
+		}
+		result = append(result, e)
+	}
+	return result, nil
 }
 
 // scanner comum para pgx.Row e pgx.Rows

@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	apperr "github.com/gaberuh/rpg-idle-progression-service/internal/errors"
-	"github.com/gaberuh/rpg-idle-progression-service/internal/domain"
 	httpdto "github.com/gaberuh/rpg-idle-progression-service/internal/dto"
 	"github.com/gaberuh/rpg-idle-progression-service/internal/middleware"
 	"github.com/gaberuh/rpg-idle-progression-service/internal/repository"
@@ -33,11 +33,17 @@ func NewHuntHandler(svc service.HuntService) *HuntHandler {
 // @Tags        hunts
 // @Security    BearerAuth
 // @Produce     json
-// @Param       cursor query string false "Cursor da página anterior (opaque, retornado em next_cursor)"
+// @Param       cursor query string false "Cursor da página anterior (opaco, retornado em next_cursor)"
 // @Param       limit  query int    false "Itens por página (padrão 20, máx 100)"
 // @Success     200 {object} dto.ListHuntsResponse
 // @Router      /api/v1/hunts [get]
 func (h *HuntHandler) ListHunts(w http.ResponseWriter, r *http.Request) {
+	playerID, ok := middleware.PlayerIDFromCtx(r.Context())
+	if !ok {
+		writeErr(w, apperr.ErrUnauthorized)
+		return
+	}
+
 	limit := service.DefaultPageSize
 	if v := r.URL.Query().Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -58,7 +64,7 @@ func (h *HuntHandler) ListHunts(w http.ResponseWriter, r *http.Request) {
 		cursor = c
 	}
 
-	hunts, nextCursor, err := h.svc.ListHunts(r.Context(), cursor, limit)
+	hunts, nextCursor, err := h.svc.ListHunts(r.Context(), playerID, cursor, limit)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -66,7 +72,15 @@ func (h *HuntHandler) ListHunts(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]httpdto.HuntResponse, len(hunts))
 	for i, hunt := range hunts {
-		items[i] = toHuntResponse(hunt)
+		items[i] = httpdto.HuntResponse{
+			ID:               hunt.ID,
+			Name:             hunt.Name,
+			RecommendedLevel: hunt.RecommendedLevel,
+			Difficulty:       string(hunt.Difficulty),
+			XPPerHour:        hunt.XPPerHour,
+			GoldPerHour:      hunt.GoldPerHour,
+			Available:        hunt.Available,
+		}
 	}
 
 	var nextCursorStr *string
@@ -115,13 +129,20 @@ func decodeCursor(s string) (*repository.HuntCursor, error) {
 // @Security    BearerAuth
 // @Accept      json
 // @Produce     json
-// @Param       body body dto.StartHuntRequest true "Payload"
-// @Success     201
-// @Router      /api/v1/hunts/start [post]
+// @Param       hunt_id path string true "ID da hunt"
+// @Param       body    body dto.StartHuntRequest true "Payload"
+// @Success     201 {object} dto.StartHuntResponse
+// @Router      /api/v1/hunts/{hunt_id}/start [post]
 func (h *HuntHandler) StartHunt(w http.ResponseWriter, r *http.Request) {
 	playerID, ok := middleware.PlayerIDFromCtx(r.Context())
 	if !ok {
 		writeErr(w, apperr.ErrUnauthorized)
+		return
+	}
+
+	huntID, err := uuid.Parse(chi.URLParam(r, "hunt_id"))
+	if err != nil {
+		writeErr(w, apperr.ErrValidation)
 		return
 	}
 
@@ -135,15 +156,20 @@ func (h *HuntHandler) StartHunt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Monta snapshot a partir do payload
-	snapshot := buildSnapshot(req.Snapshot)
-
-	if err := h.svc.StartHunt(r.Context(), playerID, req.HuntID, req.DurationMinutes, snapshot); err != nil {
+	result, err := h.svc.StartHunt(r.Context(), playerID, huntID, req.DurationMinutes)
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
+	writeJSON(w, http.StatusCreated, httpdto.StartHuntResponse{
+		SessionID:              result.SessionID,
+		HuntID:                 result.HuntID,
+		HuntName:               result.HuntName,
+		StartedAt:              result.StartedAt,
+		ConfiguredDurationMins: result.ConfiguredDurationMins,
+		EstimatedEndAt:         result.EstimatedEndAt,
+	})
 }
 
 // StopHunt godoc
@@ -151,8 +177,8 @@ func (h *HuntHandler) StartHunt(w http.ResponseWriter, r *http.Request) {
 // @Tags        hunts
 // @Security    BearerAuth
 // @Produce     json
-// @Success     200
-// @Router      /api/v1/hunts/stop [post]
+// @Success     200 {object} dto.StopHuntResponse
+// @Router      /api/v1/hunts/current/stop [post]
 func (h *HuntHandler) StopHunt(w http.ResponseWriter, r *http.Request) {
 	playerID, ok := middleware.PlayerIDFromCtx(r.Context())
 	if !ok {
@@ -160,12 +186,19 @@ func (h *HuntHandler) StopHunt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.StopHunt(r.Context(), playerID); err != nil {
+	result, err := h.svc.StopHunt(r.Context(), playerID)
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	writeJSON(w, http.StatusOK, httpdto.StopHuntResponse{
+		SessionID:       result.SessionID,
+		EndedBy:         result.EndedBy,
+		XPGained:        result.XPGained,
+		GoldGained:      result.GoldGained,
+		DurationMinutes: result.DurationMinutes,
+	})
 }
 
 // GetActiveSession godoc
@@ -174,7 +207,7 @@ func (h *HuntHandler) StopHunt(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Produce     json
 // @Success     200 {object} dto.ActiveSessionResponse
-// @Router      /api/v1/hunts/active [get]
+// @Router      /api/v1/hunts/current [get]
 func (h *HuntHandler) GetActiveSession(w http.ResponseWriter, r *http.Request) {
 	playerID, ok := middleware.PlayerIDFromCtx(r.Context())
 	if !ok {
@@ -182,65 +215,99 @@ func (h *HuntHandler) GetActiveSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := h.svc.GetActiveSession(r.Context(), playerID)
+	result, err := h.svc.GetActiveSession(r.Context(), playerID)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
+	s := result.Session
 	writeJSON(w, http.StatusOK, httpdto.ActiveSessionResponse{
-		SessionID:          session.ID,
-		HuntID:             session.HuntID,
-		Status:             string(session.Status),
-		StartedAt:          session.StartedAt,
-		ConfiguredDuration: session.ConfiguredDuration,
-		XPGained:           session.XPGained,
-		GoldGained:         session.GoldGained,
-		DeathCount:         session.DeathCount,
+		SessionID:              s.ID,
+		HuntName:               result.HuntName,
+		Status:                 string(s.Status),
+		StartedAt:              s.StartedAt,
+		EstimatedEndAt:         result.EstimatedEndAt,
+		ElapsedMinutes:         result.ElapsedMinutes,
+		ConfiguredDurationMins: s.ConfiguredDuration,
+		XPGained:               s.XPGained,
+		GoldGained:             s.GoldGained,
 	})
 }
 
-func toHuntResponse(h domain.Hunt) httpdto.HuntResponse {
-	return httpdto.HuntResponse{
-		ID:               h.ID,
-		Name:             h.Name,
-		RecommendedLevel: h.RecommendedLevel,
-		Difficulty:       string(h.Difficulty),
-		XPPerHour:        h.XPPerHour,
-		GoldPerHour:      h.GoldPerHour,
+// GetSessionResult godoc
+// @Summary     Retorna o resultado completo de uma sessão encerrada
+// @Tags        hunts
+// @Security    BearerAuth
+// @Produce     json
+// @Param       session_id path string true "ID da sessão"
+// @Success     200 {object} dto.SessionResultResponse
+// @Router      /api/v1/hunts/sessions/{session_id} [get]
+func (h *HuntHandler) GetSessionResult(w http.ResponseWriter, r *http.Request) {
+	playerID, ok := middleware.PlayerIDFromCtx(r.Context())
+	if !ok {
+		writeErr(w, apperr.ErrUnauthorized)
+		return
 	}
+
+	sessionID, err := uuid.Parse(chi.URLParam(r, "session_id"))
+	if err != nil {
+		writeErr(w, apperr.ErrValidation)
+		return
+	}
+
+	result, err := h.svc.GetSessionResult(r.Context(), playerID, sessionID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	s := result.Session
+	durationMinutes := s.ConfiguredDuration
+	if s.EndedAt != nil {
+		durationMinutes = int(s.EndedAt.Sub(s.StartedAt).Minutes())
+	}
+
+	var endedByStr *string
+	if s.EndedBy != nil {
+		v := string(*s.EndedBy)
+		endedByStr = &v
+	}
+
+	kills := make([]httpdto.SessionKillCount, len(result.KillCounts))
+	for i, kc := range result.KillCounts {
+		kills[i] = httpdto.SessionKillCount{MonsterName: kc.MonsterName, Kills: kc.KillCount}
+	}
+
+	loot := make([]httpdto.SessionLootItem, len(result.Loot))
+	for i, l := range result.Loot {
+		item := httpdto.SessionLootItem{
+			Name:     l.ItemName,
+			Rarity:   l.Rarity,
+			Quantity: l.Quantity,
+		}
+		if len(l.ItemIDs) == 1 {
+			item.ItemID = &l.ItemIDs[0]
+		}
+		loot[i] = item
+	}
+
+	writeJSON(w, http.StatusOK, httpdto.SessionResultResponse{
+		SessionID:       s.ID,
+		HuntName:        result.HuntName,
+		Status:          string(s.Status),
+		EndedBy:         endedByStr,
+		StartedAt:       s.StartedAt,
+		EndedAt:         s.EndedAt,
+		DurationMinutes: durationMinutes,
+		XPGained:        s.XPGained,
+		GoldGained:      s.GoldGained,
+		DeathCount:      s.DeathCount,
+		KillCounts:      kills,
+		Loot:            loot,
+	})
 }
 
-func buildSnapshot(p httpdto.SnapshotPayload) domain.HuntSession {
-	skills := make(domain.SnapshotSkills, len(p.Skills))
-	for k, v := range p.Skills {
-		skills[k] = domain.SnapshotSkill{Level: v.Level}
-	}
-
-	equipment := make(domain.SnapshotEquipment, len(p.Equipment))
-	for k, v := range p.Equipment {
-		if v == nil {
-			equipment[k] = nil
-			continue
-		}
-		equipment[k] = &domain.SnapshotItem{
-			ItemID:  v.ItemID,
-			Name:    v.Name,
-			Attack:  v.Attack,
-			Defense: v.Defense,
-			Armor:   v.Armor,
-		}
-	}
-
-	return domain.HuntSession{
-		SnapshotLevel:     p.Level,
-		SnapshotVocation:  domain.Vocation(p.Vocation),
-		SnapshotSkills:    skills,
-		SnapshotEquipment: equipment,
-	}
-}
-
-// writeErr escreve um erro HTTP padronizado.
 func writeErr(w http.ResponseWriter, err error) {
 	var appErr *apperr.AppError
 	if e, ok := err.(*apperr.AppError); ok {
@@ -266,4 +333,3 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
 }
-
