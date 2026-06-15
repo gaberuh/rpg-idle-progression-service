@@ -36,22 +36,22 @@ func NewHuntProducer(brokers []string) (HuntProducer, error) {
 }
 
 func (p *kafkaProducer) PublishHuntStarted(ctx context.Context, event dto.HuntSessionStarted) error {
-	return p.publish(ctx, TopicProgressionEvents, event.CharacterID.String(), event)
+	return p.publish(ctx, TopicProgressionEvents, "HuntSessionStarted", event.CharacterID.String(), event)
 }
 
 func (p *kafkaProducer) PublishHuntTickResolved(ctx context.Context, event dto.HuntTickResolved) error {
-	return p.publish(ctx, TopicProgressionEvents, event.CharacterID.String(), event)
+	return p.publish(ctx, TopicProgressionEvents, "HuntTickResolved", event.CharacterID.String(), event)
 }
 
 func (p *kafkaProducer) PublishHuntResolved(ctx context.Context, event dto.HuntSessionResolved) error {
-	return p.publish(ctx, TopicProgressionEvents, event.CharacterID.String(), event)
+	return p.publish(ctx, TopicProgressionEvents, "HuntSessionResolved", event.CharacterID.String(), event)
 }
 
 func (p *kafkaProducer) PublishDeathOccurred(ctx context.Context, event dto.DeathOccurred) error {
-	return p.publish(ctx, TopicProgressionEvents, event.CharacterID.String(), event)
+	return p.publish(ctx, TopicProgressionEvents, "DeathOccurred", event.CharacterID.String(), event)
 }
 
-func (p *kafkaProducer) publish(ctx context.Context, topic, key string, payload any) error {
+func (p *kafkaProducer) publish(ctx context.Context, topic, eventType, key string, payload any) error {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		slog.Error("kafka: marshal failed", "topic", topic, "err", err)
@@ -62,6 +62,9 @@ func (p *kafkaProducer) publish(ctx context.Context, topic, key string, payload 
 		Topic: topic,
 		Key:   []byte(key),
 		Value: b,
+		Headers: []kgo.RecordHeader{
+			{Key: "event_type", Value: []byte(eventType)},
+		},
 	}
 
 	if err := p.client.ProduceSync(ctx, rec).FirstErr(); err != nil {
@@ -69,6 +72,6 @@ func (p *kafkaProducer) publish(ctx context.Context, topic, key string, payload 
 		return err
 	}
 
-	slog.Debug("kafka: published", "topic", topic, "key", key)
+	slog.Debug("kafka: published", "topic", topic, "key", key, "event_type", eventType)
 	return nil
 }
