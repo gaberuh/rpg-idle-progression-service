@@ -296,7 +296,7 @@ func (r *huntRepository) ListRunningSessions(ctx context.Context, after time.Tim
 
 // GetCharacterLevel retorna o level e status do personagem para calcular available em ListHunts.
 func (r *huntRepository) GetCharacterLevel(ctx context.Context, characterID uuid.UUID) (int, string, error) {
-	const q = `SELECT level, status FROM characters WHERE id = $1`
+	const q = `SELECT level, status FROM characters WHERE player_id = $1`
 	var level int
 	var status string
 	err := r.db.QueryRow(ctx, q, characterID).Scan(&level, &status)
@@ -312,7 +312,7 @@ func (r *huntRepository) GetCharacterLevel(ctx context.Context, characterID uuid
 // GetCharacterSnapshot captura o estado completo do personagem para o snapshot da hunt.
 // Lê characters, character_skills e character_equipment com stats dos itens.
 func (r *huntRepository) GetCharacterSnapshot(ctx context.Context, characterID uuid.UUID) (*domain.CharacterSnapshot, error) {
-	const qChar = `SELECT level, vocation, status FROM characters WHERE id = $1`
+	const qChar = `SELECT level, vocation, status FROM characters WHERE player_id = $1`
 	var level int
 	var vocation string
 	var status string

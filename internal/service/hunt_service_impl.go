@@ -34,10 +34,11 @@ func (s *huntServiceImpl) ListHunts(ctx context.Context, characterID uuid.UUID, 
 		limit = MaxPageSize
 	}
 
-	characterLevel, _, err := s.repo.GetCharacterLevel(ctx, characterID)
-	if err != nil {
-		return nil, nil, err
+	characterLevel := 0
+	if level, _, err := s.repo.GetCharacterLevel(ctx, characterID); err == nil {
+		characterLevel = level
 	}
+	// Se não há personagem ainda, characterLevel = 0 → todas as hunts retornam available: false.
 
 	hunts, err := s.repo.ListHunts(ctx, cursor, limit+1)
 	if err != nil {
