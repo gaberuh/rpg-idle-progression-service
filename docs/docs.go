@@ -53,7 +53,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/hunts/active": {
+        "/api/v1/hunts/current": {
             "get": {
                 "security": [
                     {
@@ -77,7 +77,61 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/hunts/start": {
+        "/api/v1/hunts/current/stop": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hunts"
+                ],
+                "summary": "Para a hunt em andamento",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            }
+        },
+        "/api/v1/hunts/sessions/{session_id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "hunts"
+                ],
+                "summary": "Retorna o resultado completo de uma sessão encerrada",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID da sessão",
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SessionResultResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/hunts/{hunt_id}/start": {
             "post": {
                 "security": [
                     {
@@ -96,6 +150,13 @@ const docTemplate = `{
                 "summary": "Inicia uma sessão de hunt",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "ID da hunt",
+                        "name": "hunt_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
                         "description": "Payload",
                         "name": "body",
                         "in": "body",
@@ -108,27 +169,6 @@ const docTemplate = `{
                 "responses": {
                     "201": {
                         "description": "Created"
-                    }
-                }
-            }
-        },
-        "/api/v1/hunts/stop": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "hunts"
-                ],
-                "summary": "Para a hunt em andamento",
-                "responses": {
-                    "200": {
-                        "description": "OK"
                     }
                 }
             }
@@ -242,6 +282,82 @@ const docTemplate = `{
                 }
             }
         },
+        "dto.SessionKillCount": {
+            "type": "object",
+            "properties": {
+                "kills": {
+                    "type": "integer"
+                },
+                "monster_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SessionLootItem": {
+            "type": "object",
+            "properties": {
+                "item_id": {
+                    "description": "preenchido apenas para itens únicos",
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "quantity": {
+                    "type": "integer"
+                },
+                "rarity": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SessionResultResponse": {
+            "type": "object",
+            "properties": {
+                "death_count": {
+                    "type": "integer"
+                },
+                "duration_minutes": {
+                    "type": "integer"
+                },
+                "ended_at": {
+                    "type": "string"
+                },
+                "ended_by": {
+                    "type": "string"
+                },
+                "gold_gained": {
+                    "type": "integer"
+                },
+                "hunt_name": {
+                    "type": "string"
+                },
+                "kill_counts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.SessionKillCount"
+                    }
+                },
+                "loot": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.SessionLootItem"
+                    }
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "xp_gained": {
+                    "type": "integer"
+                }
+            }
+        },
         "dto.SkillSnapshot": {
             "type": "object",
             "properties": {
@@ -277,7 +393,6 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "duration_minutes",
-                "hunt_id",
                 "snapshot"
             ],
             "properties": {
@@ -285,9 +400,6 @@ const docTemplate = `{
                     "type": "integer",
                     "maximum": 360,
                     "minimum": 1
-                },
-                "hunt_id": {
-                    "type": "string"
                 },
                 "snapshot": {
                     "$ref": "#/definitions/dto.SnapshotPayload"
