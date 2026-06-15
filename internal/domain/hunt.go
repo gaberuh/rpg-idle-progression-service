@@ -123,6 +123,15 @@ type SessionLoot struct {
 	Rarity     string      `db:"rarity"`
 }
 
+// CharacterSnapshot captura o estado do personagem no momento de início da hunt.
+// Lido do banco pelo servidor — não enviado pelo cliente.
+type CharacterSnapshot struct {
+	Level     int
+	Vocation  Vocation
+	Skills    SnapshotSkills
+	Equipment SnapshotEquipment
+}
+
 // SessionKillCount é usado no resultado da sessão (join com monsters).
 type SessionKillCount struct {
 	MonsterName string

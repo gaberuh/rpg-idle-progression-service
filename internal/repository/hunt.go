@@ -40,6 +40,14 @@ type HuntRepository interface {
 	// Usado pelo worker para calcular penalidades no evento DeathOccurred.
 	GetCharacterBlessings(ctx context.Context, characterID uuid.UUID) (int, error)
 
+	// GetCharacterLevel retorna o level atual e o status do personagem.
+	// Usado por ListHunts para calcular o campo available.
+	GetCharacterLevel(ctx context.Context, characterID uuid.UUID) (level int, status string, err error)
+
+	// GetCharacterSnapshot captura o estado atual do personagem (level, vocação, skills, equipment).
+	// Chamado no início da hunt — nunca vem do cliente.
+	GetCharacterSnapshot(ctx context.Context, characterID uuid.UUID) (*domain.CharacterSnapshot, error)
+
 	// GetSessionKillCounts retorna kills por monstro com nome, ordenado por kill_count DESC.
 	GetSessionKillCounts(ctx context.Context, sessionID uuid.UUID) ([]domain.SessionKillCount, error)
 
