@@ -153,6 +153,7 @@ func (w *HuntWorker) resolveSession(ctx context.Context, session domain.HuntSess
 		GoldGained:   result.Gold,
 		PhysicalHits: result.PhysicalHits,
 		ManaConsumed: result.ManaConsumed,
+		Vocation:     string(session.SnapshotVocation),
 		Kills:        kills,
 		ResolvedAt:   now,
 	})

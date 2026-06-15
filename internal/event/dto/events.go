@@ -25,6 +25,7 @@ type HuntTickResolved struct {
 	GoldGained   int64          `json:"gold_gained"`
 	PhysicalHits int            `json:"physical_hits"`
 	ManaConsumed int64          `json:"mana_consumed"`
+	Vocation     string         `json:"vocation"`
 	Kills        map[string]int `json:"kills"` // monster_id → count do intervalo
 	ResolvedAt   time.Time      `json:"resolved_at"`
 }
