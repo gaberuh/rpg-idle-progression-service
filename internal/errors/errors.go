@@ -17,6 +17,7 @@ var (
 	ErrForbidden         = &AppError{"FORBIDDEN", "Acesso negado", http.StatusForbidden}
 	ErrNotFound          = &AppError{"NOT_FOUND", "Recurso não encontrado", http.StatusNotFound}
 	ErrCharacterNotIdle  = &AppError{"CHARACTER_NOT_IDLE", "Personagem não está idle", http.StatusForbidden}
+	ErrCharacterNotFound = &AppError{"NOT_FOUND", "Personagem não encontrado", http.StatusNotFound}
 	ErrHuntNotFound      = &AppError{"HUNT_NOT_FOUND", "Hunt não encontrada", http.StatusNotFound}
 	ErrHuntAlreadyActive = &AppError{"HUNT_ALREADY_ACTIVE", "Já existe uma hunt em andamento", http.StatusConflict}
 	ErrInvalidDuration   = &AppError{"INVALID_DURATION", "Duração deve ser entre 1 e 360 minutos", http.StatusUnprocessableEntity}

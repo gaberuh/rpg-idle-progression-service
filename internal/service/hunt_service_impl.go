@@ -26,12 +26,17 @@ func NewHuntService(repo repository.HuntRepository, producer event.HuntProducer)
 	return &huntServiceImpl{repo: repo, producer: producer}
 }
 
-func (s *huntServiceImpl) ListHunts(ctx context.Context, cursor *repository.HuntCursor, limit int) ([]domain.Hunt, *repository.HuntCursor, error) {
+func (s *huntServiceImpl) ListHunts(ctx context.Context, characterID uuid.UUID, cursor *repository.HuntCursor, limit int) ([]HuntWithAvailability, *repository.HuntCursor, error) {
 	if limit <= 0 {
 		limit = DefaultPageSize
 	}
 	if limit > MaxPageSize {
 		limit = MaxPageSize
+	}
+
+	characterLevel, _, err := s.repo.GetCharacterLevel(ctx, characterID)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	hunts, err := s.repo.ListHunts(ctx, cursor, limit+1)
@@ -49,7 +54,15 @@ func (s *huntServiceImpl) ListHunts(ctx context.Context, cursor *repository.Hunt
 		hunts = hunts[:limit]
 	}
 
-	return hunts, nextCursor, nil
+	result := make([]HuntWithAvailability, len(hunts))
+	for i, h := range hunts {
+		result[i] = HuntWithAvailability{
+			Hunt:      h,
+			Available: characterLevel >= h.RecommendedLevel,
+		}
+	}
+
+	return result, nextCursor, nil
 }
 
 func (s *huntServiceImpl) StartHunt(
@@ -57,24 +70,29 @@ func (s *huntServiceImpl) StartHunt(
 	characterID uuid.UUID,
 	huntID uuid.UUID,
 	durationMinutes int,
-	snapshot domain.HuntSession,
-) error {
+) (*StartHuntResult, error) {
 	if durationMinutes < minDurationMinutes || durationMinutes > maxDurationMinutes {
-		return apperr.ErrInvalidDuration
+		return nil, apperr.ErrInvalidDuration
+	}
+
+	// Captura snapshot do personagem no servidor — valida status idle e level mínimo.
+	snapshot, err := s.repo.GetCharacterSnapshot(ctx, characterID)
+	if err != nil {
+		return nil, err
 	}
 
 	hunt, err := s.repo.GetHuntByID(ctx, huntID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	if snapshot.SnapshotLevel < hunt.RecommendedLevel/2 {
-		return apperr.ErrLevelTooLow
+	if snapshot.Level < hunt.RecommendedLevel {
+		return nil, apperr.ErrLevelTooLow
 	}
 
 	existing, err := s.repo.GetActiveSession(ctx, characterID)
 	if err == nil && existing != nil {
-		return apperr.ErrHuntAlreadyActive
+		return nil, apperr.ErrHuntAlreadyActive
 	}
 
 	now := time.Now().UTC()
@@ -86,14 +104,14 @@ func (s *huntServiceImpl) StartHunt(
 		StartedAt:          now,
 		ConfiguredDuration: durationMinutes,
 		LastResolvedAt:     now,
-		SnapshotEquipment:  snapshot.SnapshotEquipment,
-		SnapshotSkills:     snapshot.SnapshotSkills,
-		SnapshotLevel:      snapshot.SnapshotLevel,
-		SnapshotVocation:   snapshot.SnapshotVocation,
+		SnapshotEquipment:  snapshot.Equipment,
+		SnapshotSkills:     snapshot.Skills,
+		SnapshotLevel:      snapshot.Level,
+		SnapshotVocation:   snapshot.Vocation,
 	}
 
 	if err := s.repo.CreateSession(ctx, session); err != nil {
-		return err
+		return nil, err
 	}
 
 	_ = s.producer.PublishHuntStarted(ctx, dto.HuntSessionStarted{
@@ -103,19 +121,26 @@ func (s *huntServiceImpl) StartHunt(
 		StartedAt:   now,
 	})
 
-	return nil
+	return &StartHuntResult{
+		SessionID:              session.ID,
+		HuntID:                 huntID,
+		HuntName:               hunt.Name,
+		StartedAt:              now,
+		ConfiguredDurationMins: durationMinutes,
+		EstimatedEndAt:         now.Add(time.Duration(durationMinutes) * time.Minute),
+	}, nil
 }
 
-func (s *huntServiceImpl) StopHunt(ctx context.Context, characterID uuid.UUID) error {
+func (s *huntServiceImpl) StopHunt(ctx context.Context, characterID uuid.UUID) (*StopHuntResult, error) {
 	session, err := s.repo.GetActiveSession(ctx, characterID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	now := time.Now().UTC()
 	endedBy := domain.EndedByPlayerStopped
 	if err := s.repo.EndSession(ctx, session.ID, endedBy, domain.SessionPendingClaim, now); err != nil {
-		return err
+		return nil, err
 	}
 
 	durationMinutes := int(now.Sub(session.StartedAt).Minutes())
@@ -132,11 +157,36 @@ func (s *huntServiceImpl) StopHunt(ctx context.Context, characterID uuid.UUID) e
 		ResolvedAt:      now,
 	})
 
-	return nil
+	return &StopHuntResult{
+		SessionID:       session.ID,
+		EndedBy:         string(endedBy),
+		XPGained:        session.XPGained,
+		GoldGained:      session.GoldGained,
+		DurationMinutes: durationMinutes,
+	}, nil
 }
 
-func (s *huntServiceImpl) GetActiveSession(ctx context.Context, characterID uuid.UUID) (*domain.HuntSession, error) {
-	return s.repo.GetActiveSession(ctx, characterID)
+func (s *huntServiceImpl) GetActiveSession(ctx context.Context, characterID uuid.UUID) (*ActiveSessionResult, error) {
+	session, err := s.repo.GetActiveSession(ctx, characterID)
+	if err != nil {
+		return nil, err
+	}
+
+	hunt, err := s.repo.GetHuntByID(ctx, session.HuntID)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	elapsedMinutes := int(now.Sub(session.StartedAt).Minutes())
+	estimatedEndAt := session.StartedAt.Add(time.Duration(session.ConfiguredDuration) * time.Minute)
+
+	return &ActiveSessionResult{
+		Session:        *session,
+		HuntName:       hunt.Name,
+		ElapsedMinutes: elapsedMinutes,
+		EstimatedEndAt: estimatedEndAt,
+	}, nil
 }
 
 func (s *huntServiceImpl) GetSessionResult(ctx context.Context, characterID uuid.UUID, sessionID uuid.UUID) (*SessionResult, error) {

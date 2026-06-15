@@ -294,6 +294,96 @@ func (r *huntRepository) ListRunningSessions(ctx context.Context, after time.Tim
 	return sessions, nil
 }
 
+// GetCharacterLevel retorna o level e status do personagem para calcular available em ListHunts.
+func (r *huntRepository) GetCharacterLevel(ctx context.Context, characterID uuid.UUID) (int, string, error) {
+	const q = `SELECT level, status FROM characters WHERE id = $1`
+	var level int
+	var status string
+	err := r.db.QueryRow(ctx, q, characterID).Scan(&level, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, "", apperr.ErrCharacterNotFound
+	}
+	if err != nil {
+		return 0, "", dbErr("GetCharacterLevel", err)
+	}
+	return level, status, nil
+}
+
+// GetCharacterSnapshot captura o estado completo do personagem para o snapshot da hunt.
+// Lê characters, character_skills e character_equipment com stats dos itens.
+func (r *huntRepository) GetCharacterSnapshot(ctx context.Context, characterID uuid.UUID) (*domain.CharacterSnapshot, error) {
+	const qChar = `SELECT level, vocation, status FROM characters WHERE id = $1`
+	var level int
+	var vocation string
+	var status string
+	if err := r.db.QueryRow(ctx, qChar, characterID).Scan(&level, &vocation, &status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.ErrCharacterNotFound
+		}
+		return nil, dbErr("GetCharacterSnapshot.char", err)
+	}
+	if status != "idle" {
+		return nil, apperr.ErrCharacterNotIdle
+	}
+
+	const qSkills = `SELECT skill_type, level FROM character_skills WHERE character_id = $1`
+	rows, err := r.db.Query(ctx, qSkills, characterID)
+	if err != nil {
+		return nil, dbErr("GetCharacterSnapshot.skills", err)
+	}
+	defer rows.Close()
+
+	skills := make(domain.SnapshotSkills)
+	for rows.Next() {
+		var skillType string
+		var skillLevel int
+		if err := rows.Scan(&skillType, &skillLevel); err != nil {
+			return nil, dbErr("GetCharacterSnapshot.skills.scan", err)
+		}
+		skills[skillType] = domain.SnapshotSkill{Level: skillLevel}
+	}
+
+	const qEquip = `
+		SELECT ce.slot, it.name,
+		    COALESCE((di.affixes->>'attack')::int, 0),
+		    COALESCE((di.affixes->>'defense')::int, 0),
+		    COALESCE((di.affixes->>'armor')::int, 0),
+		    di.id::text
+		FROM character_equipment ce
+		JOIN deposit_items di ON di.id = ce.item_id
+		JOIN item_templates it ON it.id = di.template_id
+		WHERE ce.character_id = $1`
+
+	eqRows, err := r.db.Query(ctx, qEquip, characterID)
+	if err != nil {
+		return nil, dbErr("GetCharacterSnapshot.equip", err)
+	}
+	defer eqRows.Close()
+
+	equipment := make(domain.SnapshotEquipment)
+	for eqRows.Next() {
+		var slot, name, itemID string
+		var attack, defense, armor int
+		if err := eqRows.Scan(&slot, &name, &attack, &defense, &armor, &itemID); err != nil {
+			return nil, dbErr("GetCharacterSnapshot.equip.scan", err)
+		}
+		equipment[slot] = &domain.SnapshotItem{
+			ItemID:  itemID,
+			Name:    name,
+			Attack:  attack,
+			Defense: defense,
+			Armor:   armor,
+		}
+	}
+
+	return &domain.CharacterSnapshot{
+		Level:     level,
+		Vocation:  domain.Vocation(vocation),
+		Skills:    skills,
+		Equipment: equipment,
+	}, nil
+}
+
 // GetCharacterBlessings retorna a quantidade de blessings ativas do personagem.
 func (r *huntRepository) GetCharacterBlessings(ctx context.Context, characterID uuid.UUID) (int, error) {
 	const q = `SELECT quantity FROM character_blessings WHERE character_id = $1`
