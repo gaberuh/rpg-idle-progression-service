@@ -13,6 +13,13 @@ const (
 	MaxPageSize     = 100
 )
 
+type SessionResult struct {
+	Session    domain.HuntSession
+	HuntName   string
+	KillCounts []domain.SessionKillCount
+	Loot       []domain.SessionLootEntry
+}
+
 type HuntService interface {
 	// ListHunts retorna hunts paginadas. cursor nil = primeira página.
 	// Retorna os itens + o próximo cursor (nil se última página).
@@ -20,4 +27,5 @@ type HuntService interface {
 	StartHunt(ctx context.Context, characterID uuid.UUID, huntID uuid.UUID, durationMinutes int, snapshot domain.HuntSession) error
 	StopHunt(ctx context.Context, characterID uuid.UUID) error
 	GetActiveSession(ctx context.Context, characterID uuid.UUID) (*domain.HuntSession, error)
+	GetSessionResult(ctx context.Context, characterID uuid.UUID, sessionID uuid.UUID) (*SessionResult, error)
 }

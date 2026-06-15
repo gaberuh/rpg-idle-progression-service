@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	apperr "github.com/gaberuh/rpg-idle-progression-service/internal/errors"
@@ -115,13 +116,20 @@ func decodeCursor(s string) (*repository.HuntCursor, error) {
 // @Security    BearerAuth
 // @Accept      json
 // @Produce     json
-// @Param       body body dto.StartHuntRequest true "Payload"
+// @Param       hunt_id path string true "ID da hunt"
+// @Param       body    body dto.StartHuntRequest true "Payload"
 // @Success     201
-// @Router      /api/v1/hunts/start [post]
+// @Router      /api/v1/hunts/{hunt_id}/start [post]
 func (h *HuntHandler) StartHunt(w http.ResponseWriter, r *http.Request) {
 	playerID, ok := middleware.PlayerIDFromCtx(r.Context())
 	if !ok {
 		writeErr(w, apperr.ErrUnauthorized)
+		return
+	}
+
+	huntID, err := uuid.Parse(chi.URLParam(r, "hunt_id"))
+	if err != nil {
+		writeErr(w, apperr.ErrValidation)
 		return
 	}
 
@@ -135,10 +143,9 @@ func (h *HuntHandler) StartHunt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Monta snapshot a partir do payload
 	snapshot := buildSnapshot(req.Snapshot)
 
-	if err := h.svc.StartHunt(r.Context(), playerID, req.HuntID, req.DurationMinutes, snapshot); err != nil {
+	if err := h.svc.StartHunt(r.Context(), playerID, huntID, req.DurationMinutes, snapshot); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -152,7 +159,7 @@ func (h *HuntHandler) StartHunt(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Produce     json
 // @Success     200
-// @Router      /api/v1/hunts/stop [post]
+// @Router      /api/v1/hunts/current/stop [post]
 func (h *HuntHandler) StopHunt(w http.ResponseWriter, r *http.Request) {
 	playerID, ok := middleware.PlayerIDFromCtx(r.Context())
 	if !ok {
@@ -174,7 +181,7 @@ func (h *HuntHandler) StopHunt(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Produce     json
 // @Success     200 {object} dto.ActiveSessionResponse
-// @Router      /api/v1/hunts/active [get]
+// @Router      /api/v1/hunts/current [get]
 func (h *HuntHandler) GetActiveSession(w http.ResponseWriter, r *http.Request) {
 	playerID, ok := middleware.PlayerIDFromCtx(r.Context())
 	if !ok {
@@ -197,6 +204,79 @@ func (h *HuntHandler) GetActiveSession(w http.ResponseWriter, r *http.Request) {
 		XPGained:           session.XPGained,
 		GoldGained:         session.GoldGained,
 		DeathCount:         session.DeathCount,
+	})
+}
+
+// GetSessionResult godoc
+// @Summary     Retorna o resultado completo de uma sessão encerrada
+// @Tags        hunts
+// @Security    BearerAuth
+// @Produce     json
+// @Param       session_id path string true "ID da sessão"
+// @Success     200 {object} dto.SessionResultResponse
+// @Router      /api/v1/hunts/sessions/{session_id} [get]
+func (h *HuntHandler) GetSessionResult(w http.ResponseWriter, r *http.Request) {
+	playerID, ok := middleware.PlayerIDFromCtx(r.Context())
+	if !ok {
+		writeErr(w, apperr.ErrUnauthorized)
+		return
+	}
+
+	sessionID, err := uuid.Parse(chi.URLParam(r, "session_id"))
+	if err != nil {
+		writeErr(w, apperr.ErrValidation)
+		return
+	}
+
+	result, err := h.svc.GetSessionResult(r.Context(), playerID, sessionID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	s := result.Session
+	durationMinutes := s.ConfiguredDuration
+	if s.EndedAt != nil {
+		durationMinutes = int(s.EndedAt.Sub(s.StartedAt).Minutes())
+	}
+
+	var endedByStr *string
+	if s.EndedBy != nil {
+		v := string(*s.EndedBy)
+		endedByStr = &v
+	}
+
+	kills := make([]httpdto.SessionKillCount, len(result.KillCounts))
+	for i, kc := range result.KillCounts {
+		kills[i] = httpdto.SessionKillCount{MonsterName: kc.MonsterName, Kills: kc.KillCount}
+	}
+
+	loot := make([]httpdto.SessionLootItem, len(result.Loot))
+	for i, l := range result.Loot {
+		item := httpdto.SessionLootItem{
+			Name:     l.ItemName,
+			Rarity:   l.Rarity,
+			Quantity: l.Quantity,
+		}
+		if len(l.ItemIDs) == 1 {
+			item.ItemID = &l.ItemIDs[0]
+		}
+		loot[i] = item
+	}
+
+	writeJSON(w, http.StatusOK, httpdto.SessionResultResponse{
+		SessionID:       s.ID,
+		HuntName:        result.HuntName,
+		Status:          string(s.Status),
+		EndedBy:         endedByStr,
+		StartedAt:       s.StartedAt,
+		EndedAt:         s.EndedAt,
+		DurationMinutes: durationMinutes,
+		XPGained:        s.XPGained,
+		GoldGained:      s.GoldGained,
+		DeathCount:      s.DeathCount,
+		KillCounts:      kills,
+		Loot:            loot,
 	})
 }
 

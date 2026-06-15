@@ -111,6 +111,38 @@ func (s *huntServiceImpl) GetActiveSession(ctx context.Context, characterID uuid
 	return s.repo.GetActiveSession(ctx, characterID)
 }
 
+func (s *huntServiceImpl) GetSessionResult(ctx context.Context, characterID uuid.UUID, sessionID uuid.UUID) (*SessionResult, error) {
+	session, err := s.repo.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if session.CharacterID != characterID {
+		return nil, apperr.ErrSessionNotFound
+	}
+
+	hunt, err := s.repo.GetHuntByID(ctx, session.HuntID)
+	if err != nil {
+		return nil, err
+	}
+
+	kills, err := s.repo.GetSessionKillCounts(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	loot, err := s.repo.GetSessionLoot(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &SessionResult{
+		Session:    *session,
+		HuntName:   hunt.Name,
+		KillCounts: kills,
+		Loot:       loot,
+	}, nil
+}
+
 // completeSession é chamado pelo worker quando a sessão chega ao fim do tempo configurado.
 func (s *huntServiceImpl) completeSession(ctx context.Context, session domain.HuntSession) error {
 	endedBy := domain.EndedByCompleted

@@ -6,11 +6,41 @@ import (
 	"github.com/google/uuid"
 )
 
+// SessionKillCount é o total de kills de um monstro na sessão.
+type SessionKillCount struct {
+	MonsterName string `json:"monster_name"`
+	Kills       int    `json:"kills"`
+}
+
+// SessionLootItem é um item do loot da sessão.
+type SessionLootItem struct {
+	Name     string     `json:"name"`
+	Rarity   string     `json:"rarity"`
+	Quantity int        `json:"quantity"`
+	ItemID   *uuid.UUID `json:"item_id,omitempty"` // preenchido apenas para itens únicos
+}
+
+// SessionResultResponse é o resultado completo de uma sessão encerrada.
+type SessionResultResponse struct {
+	SessionID       uuid.UUID          `json:"session_id"`
+	HuntName        string             `json:"hunt_name"`
+	Status          string             `json:"status"`
+	EndedBy         *string            `json:"ended_by,omitempty"`
+	StartedAt       time.Time          `json:"started_at"`
+	EndedAt         *time.Time         `json:"ended_at,omitempty"`
+	DurationMinutes int                `json:"duration_minutes"`
+	XPGained        int64              `json:"xp_gained"`
+	GoldGained      int64              `json:"gold_gained"`
+	DeathCount      int                `json:"death_count"`
+	KillCounts      []SessionKillCount `json:"kill_counts"`
+	Loot            []SessionLootItem  `json:"loot"`
+}
+
 // StartHuntRequest é o payload para iniciar uma hunt.
+// hunt_id vem do path /:hunt_id/start, não do body.
 type StartHuntRequest struct {
-	HuntID          uuid.UUID         `json:"hunt_id"          validate:"required"`
-	DurationMinutes int               `json:"duration_minutes" validate:"required,min=1,max=360"`
-	Snapshot        SnapshotPayload   `json:"snapshot"         validate:"required"`
+	DurationMinutes int             `json:"duration_minutes" validate:"required,min=1,max=360"`
+	Snapshot        SnapshotPayload `json:"snapshot"         validate:"required"`
 }
 
 type SnapshotPayload struct {
